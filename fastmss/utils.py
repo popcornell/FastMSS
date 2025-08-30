@@ -1,0 +1,247 @@
+from functools import partial
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import lhotse
+import numpy as np
+from lhotse import MonoCut, Recording
+from lhotse.parallel import parallel_map
+from lhotse.supervision import AlignmentItem, SupervisionSegment
+from tqdm import tqdm
+
+
+def split_recording_by_channels(recording: Recording) -> List[MonoCut]:
+    """
+    Split a multi-channel Recording into separate single-channel Cuts.
+    Args:
+        recording: Recording with multi-channel AudioSource
+    Returns:
+        List of Cuts, one per channel
+    """
+    # Get the multi-channel source
+    source = recording.sources[0]
+    channels = source.channels
+    single_channel_cuts = []
+
+    for channel in channels:
+        # Create Cut for this specific channel
+        channel_cut = MonoCut(
+            id=f"{recording.id}_ch{channel}",
+            start=0,
+            duration=recording.duration,
+            channel=channel,  # This tells Lhotse which channel to extract
+            recording=recording,  # Reference to the original multi-channel recording
+        )
+        single_channel_cuts.append(channel_cut)
+
+    return single_channel_cuts
+
+
+def split_monocut_at_pauses(
+    monocut: MonoCut, pause_threshold: float = 0.2, drop_without_alignment=True
+) -> List[MonoCut]:
+    """
+    Split a MonoCut at pauses longer than the specified threshold while preserving alignments.
+
+    When splitting at gaps:
+    - The previous segment ends at gap_start + gap_duration/2
+    - The next segment starts at gap_start + gap_duration/2
+    - Leading silence longer than threshold creates a separate silent segment
+    - Trailing silence longer than threshold creates a separate silent segment
+    - For gaps shorter than threshold, segments include the full gap
+
+    Args:
+        monocut: The MonoCut to split
+        pause_threshold: Minimum pause duration in seconds to split at (default: 0.2s = 200ms)
+
+    Returns:
+        List of MonoCut objects split at long pauses
+    """
+
+    if not monocut.supervisions or not monocut.supervisions[0].alignment:
+        # No alignment info, return original cut
+        if drop_without_alignment:
+            return []
+        else:
+            return [monocut]
+
+    elif pause_threshold is None:
+        return [monocut]
+
+    supervision = monocut.supervisions[0]
+    word_alignments = supervision.alignment["word"]
+
+    # Filter out empty symbols upfront
+    valid_alignments = [item for item in word_alignments if item.symbol.strip() != ""]
+
+    if len(valid_alignments) == 0:
+        return [monocut]  # No valid words, return original
+
+    # Check for leading silence
+    first_word = valid_alignments[0]
+    leading_silence = first_word.start - monocut.start
+
+    # Check for trailing silence
+    last_word = valid_alignments[-1]
+    last_word_end = last_word.start + last_word.duration
+    monocut_end = monocut.start + monocut.duration
+    trailing_silence = monocut_end - last_word_end
+
+    # Find all potential split points (including leading/trailing silence)
+    split_points = []
+    segment_boundaries = (
+        []
+    )  # (start_word_idx, end_word_idx, segment_start_time, segment_end_time)
+
+    # Handle leading silence
+    current_segment_start_time = monocut.start
+    current_word_start_idx = 0
+
+    if leading_silence >= pause_threshold:
+        # Leading silence gets split in the middle
+        split_time = monocut.start + leading_silence / 2
+        split_points.append(split_time)
+        current_segment_start_time = split_time
+
+    # Find gaps between words that exceed threshold
+    for i in range(len(valid_alignments) - 1):
+        current_item = valid_alignments[i]
+        next_item = valid_alignments[i + 1]
+
+        current_end = current_item.start + current_item.duration
+        gap_start = current_end
+        gap_end = next_item.start
+        gap_duration = gap_end - gap_start
+
+        if gap_duration >= pause_threshold:
+            # End current segment at middle of gap
+            split_time = gap_start + gap_duration / 2
+
+            # Add current segment
+            segment_boundaries.append(
+                (
+                    current_word_start_idx,
+                    i,  # end at current word (inclusive)
+                    current_segment_start_time,
+                    split_time,
+                )
+            )
+
+            # Start new segment at same split point
+            current_segment_start_time = split_time
+            current_word_start_idx = i + 1
+            split_points.append(split_time)
+
+    # Handle the final segment
+    final_segment_end_time = monocut_end
+    if trailing_silence >= pause_threshold:
+        # Split trailing silence in the middle
+        split_time = last_word_end + trailing_silence / 2
+        # End the words segment at the split
+        segment_boundaries.append(
+            (
+                current_word_start_idx,
+                len(valid_alignments) - 1,
+                current_segment_start_time,
+                split_time,
+            )
+        )
+        split_points.append(split_time)
+    else:
+        # Include trailing silence in the final segment
+        segment_boundaries.append(
+            (
+                current_word_start_idx,
+                len(valid_alignments) - 1,
+                current_segment_start_time,
+                final_segment_end_time,
+            )
+        )
+
+    # If no splits were made, return original
+    if not split_points:
+        return [monocut]
+
+    # Create new MonoCuts for each segment
+    result_cuts = []
+    for seg_idx, (
+        start_word_idx,
+        end_word_idx,
+        segment_start,
+        segment_end,
+    ) in enumerate(segment_boundaries):
+        segment_words = valid_alignments[start_word_idx : end_word_idx + 1]
+
+        if not segment_words:
+            continue
+
+        segment_duration = segment_end - segment_start
+
+        # Adjust alignment times to be relative to segment start
+        adjusted_alignments = []
+        for item in segment_words:
+            adjusted_item = AlignmentItem(
+                symbol=item.symbol,
+                start=item.start - segment_start,
+                duration=item.duration,
+                score=item.score,
+            )
+            adjusted_alignments.append(adjusted_item)
+
+        # Create segment text
+        segment_text = " ".join(item.symbol for item in segment_words)
+
+        # Create new supervision with adjusted alignments
+        new_supervision = SupervisionSegment(
+            id=f"{supervision.id}-{seg_idx:03d}",
+            recording_id=supervision.recording_id,
+            start=0,  # Relative to the new cut
+            duration=segment_duration,
+            channel=supervision.channel,
+            text=segment_text,
+            language=supervision.language,
+            speaker=supervision.speaker,
+            gender=supervision.gender,
+            custom=supervision.custom,
+            alignment={"word": adjusted_alignments},
+        )
+
+        # Create new MonoCut
+        new_cut = MonoCut(
+            id=f"{monocut.id}-{seg_idx:03d}",
+            start=segment_start,
+            duration=segment_duration,
+            channel=monocut.channel,
+            supervisions=[new_supervision],
+            recording=monocut.recording,
+            custom=monocut.custom,
+        )
+
+        result_cuts.append(new_cut)
+
+    return result_cuts
+
+
+def split_monocuts_batch(
+    monocuts: List[MonoCut], pause_threshold: float = 0.2, num_jobs: int = 1
+) -> List[MonoCut]:
+    """
+    Split a list of MonoCuts at pauses longer than the specified threshold.
+
+    Args:
+        monocuts: List of MonoCuts to split
+        pause_threshold: Minimum pause duration in seconds to split at (default: 0.2s = 200ms)
+
+    Returns:
+        List of all resulting MonoCut objects
+    """
+    result = []
+    helper_func = partial(split_monocut_at_pauses, pause_threshold=pause_threshold)
+    n_monocuts = len(monocuts)
+    monocuts = iter(monocuts)
+    for elem in tqdm(
+        parallel_map(helper_func, monocuts, num_jobs=num_jobs),
+        total=n_monocuts,
+        desc="Splitting cuts using forced alignment.",
+    ):
+        result.extend(elem)
+    return lhotse.CutSet(result)
