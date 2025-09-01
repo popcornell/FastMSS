@@ -53,9 +53,11 @@ save_cutset: True
 drop_without_align: True
 
 
-#mic_type: single
+#mic_type: circular_array
 # todo add multichannel.
-# circular_array
+#circular_array: # match AMI
+#  diameter: 0.08
+#  n_mics: 8
 # linear array
 # displaced array
 # add support also for hrtf ? it would be cool !

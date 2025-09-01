@@ -36,7 +36,7 @@ use_fir: False
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
 noise_folders:
-  - /disks/disk1/scornell/FastMSS/wham_noise_16khz
+ # - /disks/disk1/scornell/FastMSS/wham_noise_16khz
 
 filter_noise_len: 20 # remove shorter than 20 seconds
 

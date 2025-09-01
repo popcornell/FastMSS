@@ -25,6 +25,13 @@ class RIRSimulator:
             if distance(c_src_pos, mic_pos) > 1:
                 return c_src_pos
 
+
+    def sample_circ_array(self, diameter, n_mics):
+        pass
+
+    def sample_linear_array(self, ):
+        raise NotImplementedError
+
     def gen_rirs(self, meeting_id):
         # sample some amount of RIRs for each meeting and iterate over these.
         # so that speaker can change position
