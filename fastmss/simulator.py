@@ -13,6 +13,8 @@ from scipy.signal import convolve, fftconvolve, firwin
 
 from fastmss.hmm_turn_taking import TransitionParams, TransitionType
 
+from .utils import repeat_audio_with_crossfade
+
 # configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -219,19 +221,14 @@ class ConversationalMeetingSimulator:
         info = sf.SoundFile(c_noise)
         assert info.samplerate == self.cfg.samplerate
 
-        tgt_len = audio.shape[-1] / self.cfg.samplerate
+        tgt_len = audio.shape[-1]
 
-        if len(info) > audio.shape[-1]:
-            cursor = np.random.randint(0, len(info) - audio.shape[-1])
-        elif len(info) < audio.shape[-1]:
-            raise ValueError(
-                f"Audio file {c_noise} is less than the desired length {tgt_len}. Exiting, background noise files should "
-                f"be long enough to cover the whole synthetic meeting."
-            )
+        if len(info) > tgt_len:
+            cursor = np.random.randint(0, len(info) - tgt_len)
         else:
             cursor = 0
 
-        c_noise, _ = sf.read(c_noise, start=cursor, stop=cursor + audio.shape[-1])
+        c_noise, _ = sf.read(c_noise, start=cursor, stop=cursor + tgt_len)
 
         if len(audio) == 0:
             return audio
@@ -240,6 +237,9 @@ class ConversationalMeetingSimulator:
             if c_noise.shape[-1] > 1:
                 ch = np.random.randint(0, c_noise.shape[-1])
                 c_noise = c_noise[:, ch]
+
+        if c_noise.shape[0] < tgt_len:
+            c_noise = repeat_audio_with_crossfade(c_noise, tgt_len, 16000)
 
         # Calculate maximum allowed noise level (5 dB below min speech level)
         max_noise_level_db = min_speech_level_db + np.random.uniform(*range_db_offset)

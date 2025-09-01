@@ -28,7 +28,7 @@ def discard(x, duration):
     info = sf.SoundFile(x)
     # allow for a little longer since the meetings can be a bit longer when there
     # are many speakers...
-    if (len(info) / info.samplerate) > (duration * 1.5):
+    if (len(info) / info.samplerate) > (duration):
         return x
     else:
         return None
@@ -93,7 +93,7 @@ def main(cfg: DictConfig) -> None:
                     )
                     noise_files.extend(tmp)
 
-            worker = partial(discard, duration=cfg.duration)
+            worker = partial(discard, duration=cfg.filter_noise_len)
             # filter noise that are too short
             filtered = []
             for n in tqdm(
@@ -106,7 +106,7 @@ def main(cfg: DictConfig) -> None:
             filtered = [x for x in filtered if x is not None]
             diff = len(noise_files) - len(filtered)
             logger.info(
-                f"Discarded {diff} noise files as they were too short. Now {len(filtered)}, before {len(noise_files)}."
+                f"Discarded {diff} noise files as they were shorter than {cfg.filter_noise_len}. Now {len(filtered)}, before {len(noise_files)}."
             )
             noise_files = filtered
 
