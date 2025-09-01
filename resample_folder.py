@@ -5,15 +5,16 @@ Resamples audio files from source folder to target sample rate
 Based on DCASE task baseline requirements (typically 44kHz -> 16kHz)
 """
 
-import os
 import argparse
+import os
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from tqdm import tqdm
+
 import torch
 import torchaudio
 import torchaudio.functional as F
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 
 def resample_file(input_file, output_file, target_sr=16000, overwrite=False):
@@ -50,7 +51,7 @@ def resample_file(input_file, output_file, target_sr=16000, overwrite=False):
             waveform,
             orig_freq=orig_sr,
             new_freq=target_sr,
-            resampling_method="sinc_interpolation"
+            resampling_method="sinc_interpolation",
         )
 
         # Save resampled audio
@@ -64,13 +65,13 @@ def resample_file(input_file, output_file, target_sr=16000, overwrite=False):
 
 
 def resample_folder(
-        input_folder,
-        output_folder,
-        target_sr=16000,
-        audio_extensions=None,
-        overwrite=False,
-        num_workers=4,
-        preserve_structure=True
+    input_folder,
+    output_folder,
+    target_sr=16000,
+    audio_extensions=None,
+    overwrite=False,
+    num_workers=4,
+    preserve_structure=True,
 ):
     """
     Resample all audio files in a folder using torchaudio
@@ -88,7 +89,7 @@ def resample_folder(
         dict: Summary of processing results
     """
     if audio_extensions is None:
-        audio_extensions = ['.wav', '.mp3', '.flac', '.m4a', '.ogg']
+        audio_extensions = [".wav", ".mp3", ".flac", ".m4a", ".ogg"]
 
     # Convert to Path objects
     input_path = Path(input_folder)
@@ -97,8 +98,8 @@ def resample_folder(
     # Find all audio files
     audio_files = []
     for ext in audio_extensions:
-        audio_files.extend(input_path.rglob(f'*{ext}'))
-        audio_files.extend(input_path.rglob(f'*{ext.upper()}'))
+        audio_files.extend(input_path.rglob(f"*{ext}"))
+        audio_files.extend(input_path.rglob(f"*{ext.upper()}"))
 
     if not audio_files:
         print(f"No audio files found in {input_folder}")
@@ -118,7 +119,7 @@ def resample_folder(
             output_file = output_path / input_file.name
 
         # Ensure output has .wav extension
-        output_file = output_file.with_suffix('.wav')
+        output_file = output_file.with_suffix(".wav")
         file_pairs.append((str(input_file), str(output_file)))
 
     # Process files
@@ -131,8 +132,10 @@ def resample_folder(
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             # Submit all tasks
             future_to_file = {
-                executor.submit(resample_file, input_f, output_f, target_sr, overwrite):
-                    (input_f, output_f) for input_f, output_f in file_pairs
+                executor.submit(
+                    resample_file, input_f, output_f, target_sr, overwrite
+                ): (input_f, output_f)
+                for input_f, output_f in file_pairs
             }
 
             # Process completed tasks with progress bar
@@ -173,11 +176,7 @@ def resample_folder(
     print(f"Errors: {errors}")
     print(f"Skipped: {skipped}")
 
-    return {
-        "processed": processed,
-        "errors": errors,
-        "skipped": skipped
-    }
+    return {"processed": processed, "errors": errors, "skipped": skipped}
 
 
 def main():
@@ -185,43 +184,37 @@ def main():
         description="Resample audio files in a folder using torchaudio"
     )
     parser.add_argument(
-        "input_folder",
-        type=str,
-        help="Path to input folder containing audio files"
+        "input_folder", type=str, help="Path to input folder containing audio files"
     )
     parser.add_argument(
-        "output_folder",
-        type=str,
-        help="Path to output folder for resampled files"
+        "output_folder", type=str, help="Path to output folder for resampled files"
     )
     parser.add_argument(
         "--target_sr",
         type=int,
         default=16000,
-        help="Target sample rate (default: 16000)"
+        help="Target sample rate (default: 16000)",
     )
     parser.add_argument(
         "--extensions",
         type=str,
         nargs="+",
         default=[".wav", ".mp3", ".flac", ".m4a", ".ogg"],
-        help="Audio file extensions to process"
+        help="Audio file extensions to process",
     )
     parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite existing output files"
+        "--overwrite", action="store_true", help="Overwrite existing output files"
     )
     parser.add_argument(
         "--num_workers",
         type=int,
         default=4,
-        help="Number of parallel workers (default: 4)"
+        help="Number of parallel workers (default: 4)",
     )
     parser.add_argument(
         "--flat_structure",
         action="store_true",
-        help="Don't preserve folder structure in output"
+        help="Don't preserve folder structure in output",
     )
 
     args = parser.parse_args()
@@ -238,7 +231,7 @@ def main():
         audio_extensions=args.extensions,
         overwrite=args.overwrite,
         num_workers=args.num_workers,
-        preserve_structure=not args.flat_structure
+        preserve_structure=not args.flat_structure,
     )
 
     return results

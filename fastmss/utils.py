@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -7,12 +8,88 @@ from lhotse import MonoCut, Recording
 from lhotse.parallel import parallel_map
 from lhotse.supervision import AlignmentItem, SupervisionSegment
 from tqdm import tqdm
-from typing import List, Optional, Tuple
-import logging
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
+
+def repeat_audio_with_crossfade(audio, target_length, crossfade_samples=1024):
+    """
+    Repeat audio to reach target length with crossfading at boundaries.
+
+    Parameters:
+    -----------
+    audio : np.ndarray
+        1D numpy array representing the audio signal
+    target_length : int
+        Desired length of the output audio in samples
+    crossfade_samples : int, optional
+        Number of samples for crossfade transition (default: 1024)
+
+    Returns:
+    --------
+    np.ndarray
+        Audio repeated to target length with crossfaded boundaries
+    """
+    if len(audio) >= target_length:
+        return audio[:target_length]
+
+    # Ensure crossfade doesn't exceed audio length
+    crossfade_samples = min(crossfade_samples, len(audio) // 4)
+
+    # Create crossfade window (cosine fade)
+    fade_in = 0.5 * (
+        1 - np.cos(np.pi * np.arange(crossfade_samples) / crossfade_samples)
+    )
+    fade_out = 0.5 * (
+        1 + np.cos(np.pi * np.arange(crossfade_samples) / crossfade_samples)
+    )
+
+    # Initialize output array
+    output = np.zeros(target_length, dtype=audio.dtype)
+    current_pos = 0
+
+    # First copy (no fade in)
+    copy_length = min(len(audio), target_length)
+    output[:copy_length] = audio[:copy_length]
+    current_pos = copy_length
+
+    # Repeat with crossfading
+    while current_pos < target_length:
+        remaining = target_length - current_pos
+        copy_length = min(len(audio), remaining)
+
+        # Calculate crossfade region
+        crossfade_start = current_pos - crossfade_samples
+        crossfade_end = current_pos
+
+        if crossfade_start >= 0 and copy_length > crossfade_samples:
+            # Apply crossfade
+            # Fade out the previous segment
+            output[crossfade_start:crossfade_end] *= fade_out
+
+            # Fade in the new segment and add
+            new_segment = audio[:copy_length].copy()
+            new_segment[:crossfade_samples] *= fade_in
+            output[
+                crossfade_start : crossfade_start + crossfade_samples
+            ] += new_segment[:crossfade_samples]
+
+            # Add the rest of the new segment
+            if copy_length > crossfade_samples:
+                output[current_pos : current_pos + copy_length - crossfade_samples] = (
+                    new_segment[crossfade_samples:]
+                )
+        else:
+            # No crossfade needed (edge cases)
+            output[current_pos : current_pos + copy_length] = audio[:copy_length]
+
+        current_pos += copy_length
+
+    return output
 
 
 def split_recording_by_channels(recording: Recording) -> List[MonoCut]:
@@ -251,6 +328,3 @@ def split_monocuts_batch(
     ):
         result.extend(elem)
     return lhotse.CutSet(result)
-
-
-
