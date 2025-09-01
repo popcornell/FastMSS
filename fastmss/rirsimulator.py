@@ -98,4 +98,10 @@ class RIRSimulator:
             output_rirs.append(flac_path)
             sf.write(flac_path, c_rir, samplerate=self.cfg.samplerate)
 
+        for src in range(self.cfg.n_pos_rirs):
+            c_rir = anechoic.rir[0][src]
+            # need to handle multichannel here, 0 is the first channel.
+            flac_path = str(output_dir / Path(meeting_id + f"_{src}-anechoic.flac"))
+            sf.write(flac_path, c_rir, samplerate=self.cfg.samplerate)
+
         return output_rirs

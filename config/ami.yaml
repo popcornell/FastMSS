@@ -2,19 +2,19 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-hydra:
+output_dir: /disks/disk1/scornell/FastMSS/ami-synth-ihm
+hydra: # overrides standard hydra output dir
   run:
-    dir: ./ami_synth_ihm
+    dir: ${output_dir}
 
-n_meetings: 10
-min_max_spk: [1, 2] # min max speakers.
-save_reverberant: True # save reverberant
+n_meetings: 5000
+min_max_spk: [2, 5] # min max speakers.
 save_anechoic: True # save also anechoic
 save_spk: True # save each speaker stream
 
-duration: 120
+duration: 35
 manifest_prefix: ami-ihm
-output_dir: /disks/disk1/scornell/FastMSS
+manifest_dir: /disks/disk1/scornell/AMI
 dset_splits:
   - train
 split_fa_factor: 0.2
@@ -26,19 +26,21 @@ use_markov: True
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
 add_noise: True
-speed_perturb: False # this makes generalization slow.
+noise_rel_gain: [-6, 8]
+speed_perturb: False # this makes generation reaaally slow.
+speed_perturb_range: [0.95, 1.05]
 use_fir: False
 
 # these will be parsed and sampled randomly.
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
 noise_folders:
-  - /disks/disk1/scornell/FastMSS/wham_noise
+  - /disks/disk1/scornell/FastMSS/wham_noise_16khz
 
 reverberate: True
-n_rirs: 100
+n_rirs: 1000
 n_pos_rirs: 50
-rt60: [0.1, 0.4]
+rt60: [0.1, 0.7]
 room_sz: [5, 10]
 room_ceiling: [3, 5]
 delta_dist: 0.5  # min distance between walls and among speakers

@@ -1,9 +1,16 @@
 import logging
 import os
+from copy import deepcopy
 from pathlib import Path
-
+from typing import Any, Dict, List, Optional, Tuple, Union
+from lhotse.supervision import AlignmentItem, SupervisionSegment
 import numpy as np
 import soundfile as sf
+from lhotse import (AudioSource, MonoCut, Recording, RecordingSet,
+                    SupervisionSet)
+from lhotse.utils import add_durations, uuid4
+from scipy.signal import fftconvolve, firwin, convolve
+
 
 from fastmss.hmm_turn_taking import TransitionParams, TransitionType
 
@@ -36,6 +43,7 @@ class ConversationalMeetingSimulator:
         # noise_files=None,
     ):
         super().__init__()
+
         self.output_dir = output_dir
         self.cfg = cfg
         self.epsilon = 0.03  # For truncated exponential distribution
@@ -101,19 +109,19 @@ class ConversationalMeetingSimulator:
         prev_duration = prev_cut.duration
 
         if transition_type == TransitionType.TURN_HOLD:
-            pause_duration = self.sample_exponential_duration(self.cfg.hmm.beta_th)
+            pause_duration = self.sample_exponential_duration(self.hmm_params.beta_th)
             return max(
                 prev_offset + prev_cut.duration + pause_duration, prev_offset_spk
             )
 
         elif transition_type == TransitionType.TURN_SWITCH:
-            pause_duration = self.sample_exponential_duration(self.cfg.hmm.beta_ts)
+            pause_duration = self.sample_exponential_duration(self.hmm_params.beta_ts)
             return max(
                 prev_offset + prev_cut.duration + pause_duration, prev_offset_spk
             )
 
         elif transition_type == TransitionType.INTERRUPTION:
-            overlap_ratio = self.sample_overlap_ratio(self.cfg.hmm.beta_ir)
+            overlap_ratio = self.sample_overlap_ratio(self.hmm_params.beta_ir)
             overlap_duration = overlap_ratio * prev_duration
             # start_offset = np.random.uniform(0, prev_duration)
 
@@ -158,7 +166,7 @@ class ConversationalMeetingSimulator:
         Returns:
         numpy.ndarray: FIR filter coefficients
         """
-        sample_rate = self.sample_rate
+        sample_rate = self.cfg.samplerate
         # Normalize the cutoff frequency (0 to 1, where 1 is Nyquist frequency)
         nyquist = sample_rate / 2
         normalized_cutoff = cutoff_freq / nyquist
@@ -192,8 +200,8 @@ class ConversationalMeetingSimulator:
 
         # Generate random noise level between 0 and max allowed
         # Using a range that gives reasonable noise levels
-        noise_level_db = np.random.uniform(max_noise_level_db - 20, max_noise_level_db)
-        noise_rms = 10 ** (noise_level_db / 20.0)
+        #noise_level_db = np.random.uniform(max_noise_level_db - 20, max_noise_level_db)
+        noise_rms = 10 ** (max_noise_level_db / 20.0)
 
         # Generate Gaussian noise
         noise = np.random.normal(0, noise_rms, audio.shape)
@@ -202,6 +210,55 @@ class ConversationalMeetingSimulator:
         noisy_audio = audio + noise
 
         return noisy_audio
+
+
+    def add_real_noise(self, audio, min_speech_level_db, range_db_offset=(-15, 3)):
+        # sample real noise clip
+
+        c_noise = np.random.choice(self.noise_files)
+        c_noise = str(c_noise)
+
+        info = sf.SoundFile(c_noise)
+        assert info.samplerate == self.cfg.samplerate
+
+        tgt_len = audio.shape[-1] / self.cfg.samplerate
+
+        if len(info) > audio.shape[-1]:
+            cursor = np.random.randint(0, len(info) - audio.shape[-1])
+        elif len(info) < audio.shape[-1]:
+            raise ValueError(f"Audio file {c_noise} is less than the desired length {tgt_len}. Exiting, background noise files should "
+                             f"be long enough to cover the whole synthetic meeting.")
+        else:
+            cursor = 0
+
+
+        c_noise, _ = sf.read(c_noise, start=cursor, stop=cursor+audio.shape[-1])
+
+        if len(audio) == 0:
+            return audio
+
+        if c_noise.ndim > 1:
+            if c_noise.shape[-1] > 1:
+                ch = np.random.randint(0, c_noise.shape[-1])
+                c_noise = c_noise[:, ch]
+
+        # Calculate maximum allowed noise level (5 dB below min speech level)
+        max_noise_level_db = min_speech_level_db + np.random.uniform(*range_db_offset)
+
+        # Generate random noise level between 0 and max allowed
+        # Using a range that gives reasonable noise levels
+        #noise_level_db = np.random.uniform(max_noise_level_db - 20, max_noise_level_db)
+        noise_rms = 10 ** (max_noise_level_db / 20.0)
+
+        c_noise = c_noise / (np.std(c_noise) + 1e-8)
+        c_noise = c_noise*noise_rms
+
+
+        # Add noise to signal
+        noisy_audio = audio + c_noise
+
+        return noisy_audio
+
 
     def normalize_to(self, audio, target_level_db):
         """
@@ -237,14 +294,16 @@ class ConversationalMeetingSimulator:
         # Apply gain
         normalized_audio = audio * gain
 
-        return normalized_audio
+        return normalized_audio, gain
 
     def gen_audio(self, indx):
 
-        n_speakers = np.random.randint(*self.cfg.min_max_spk)
-        target_dur = self.cfg.target_duration
+        min_spk, max_spk = self.cfg.min_max_spk
+        n_speakers = np.random.randint(min_spk, max_spk + 1)
+        target_dur = self.cfg.duration
 
         sampled_spk = np.random.choice(self.speakers, n_speakers, replace=False)
+
         current_time = 0
         utt_indx = 0
         prev_transition = None
@@ -284,12 +343,11 @@ class ConversationalMeetingSimulator:
             cut = np.random.choice(self.spk2cuts[current_speaker])
 
             # Load audio # optionally perturb speed here ? I think it is faster with torchaudio.
-            # if self.speed_perturb:
+            if self.cfg.speed_perturb:
             # keep these fixed
-            #    factor = np.random.uniform(SPEED_PERTURB_LOW, SPEED_PERTURB_HIGH)
-            #    cut = cut.perturb_speed(factor)
-            # if self.rirs is not None:
-            #  cut = cut.reverb_rir(np.random.choice(c_room_rirs))
+                factor = np.random.uniform(*self.cfg.speed_perturb_range)
+                cut = cut.perturb_speed(factor)
+
             c_spk = cut.supervisions[0].speaker
 
             if utt_indx == 0:
@@ -322,19 +380,23 @@ class ConversationalMeetingSimulator:
 
             current_time = prev_offset + cut.duration
 
-        base_gain = np.random.uniform(*BASE_GAIN)
+        base_gain = np.random.uniform(*self.cfg.base_gain)
         speech_lvls = []
         for utt in utterances:
-            c_gain = np.random.uniform(*REL_GAIN)
+            c_gain = np.random.uniform(*self.cfg.rel_gain)
             speech_lvls.append(base_gain + c_gain)
 
         # fetch the maximum length
-        output_audio = np.zeros((1, int(current_time * self.sample_rate)))
+        output_audio = np.zeros((1, int(current_time * self.cfg.samplerate)))
 
-        if self.save_spk:
+        if self.cfg.save_spk:
             # we need to check if all cuts have only one supervions TODO
             all_spk = list(set([x.supervisions[0].speaker for x in utterances]))
             spk2audio = {x: deepcopy(output_audio) for x in all_spk}
+
+            if self.cfg.save_anechoic:
+                all_spk = list(set([x.supervisions[0].speaker for x in utterances]))
+                spk2audio_anechoic = {x: deepcopy(output_audio) for x in all_spk}
 
         for cut, offset, c_speech_lvl in zip(utterances, offsets, speech_lvls):
             # load audio here
@@ -346,38 +408,31 @@ class ConversationalMeetingSimulator:
             # this reduces overfitting on low freq noise e.g. distinguishing speakers by noise
             c_audio = c_audio - np.mean(c_audio, -1, keepdims=True)
             if self.cfg.use_fir:
-                c_audio = fftconvolve(c_audio, fir_highpass[None, :], mode="same")
+                c_audio = convolve(c_audio, fir_highpass[None, :], mode="full")
 
             if self.cfg.reverberate:
-                c_rir = np.random.choice(c_room_rirs)
-                c_rir = c_rir.load_audio()
+                c_rir_file = str(np.random.choice(c_room_rirs))
 
-                # if we save anechoic lets also dump that.
-                pass
+                c_rir, fs = sf.read(c_rir_file)
+                assert fs == self.cfg.samplerate
+                # load anechoic rir too
+                c_rir_anechoic = str(Path(c_rir_file).parent / Path(c_rir_file).stem) + "-anechoic.flac"
+                c_rir_anechoic, fs = sf.read(c_rir_anechoic)
+                assert fs == self.cfg.samplerate
+                c_audio_anechoic = convolve(c_audio, c_rir_anechoic[None, :], mode="full")
+                c_audio = convolve(c_audio, c_rir[None, :], mode="full")
+                c_audio_anechoic = np.pad(c_audio_anechoic, ((0, 0), (0, c_audio.shape[-1] - c_audio_anechoic.shape[-1])), mode="constant")
 
 
-                #peak = np.argmax(np.abs(c_rir), -1)
-                #around_peak = int(
-                #    0.05 / (1 / self.sample_rate)
-                #)  # consider prev reflections 50ms before peak too
-
-                try:
-                    c_rir = c_rir[
-                        :, max(0, peak - around_peak) :
-                    ]  # take values around peak
-                except TypeError:
-                    c_rir = c_rir[:, max(0, peak[0] - around_peak) :]
-
-                # when rir is too long wrt audio then it creates artifacts
-                if c_audio.shape[-1] / 2 > c_rir.shape[-1]:
-                    c_audio = scipy.signal.convolve(c_audio, c_rir, mode="same")
-                else:
-                    c_rir = c_rir[..., : c_audio.shape[-1] // 4]
-                    c_audio = scipy.signal.convolve(c_audio, c_rir, mode="same")
-
+            else:
+                assert self.cfg.save_anechoic == False
             # gain adjust
-            c_audio = self.normalize_to(c_audio, c_speech_lvl)
-            offset = int(offset * self.sample_rate)
+            c_audio, c_gain = self.normalize_to(c_audio, c_speech_lvl)
+
+            if self.cfg.reverberate:
+                c_audio_anechoic = c_gain*c_audio_anechoic
+
+            offset = int(offset * self.cfg.samplerate)
             maxlen = output_audio.shape[-1]
             if (offset + c_audio.shape[-1]) > maxlen:
                 residual = (offset + c_audio.shape[-1]) - maxlen
@@ -387,18 +442,26 @@ class ConversationalMeetingSimulator:
                 output_audio = np.concatenate(
                     (output_audio, c_audio[:, -residual:]), axis=-1
                 )
-
                 for c_spk in spk2audio.keys():
                     spk2audio[c_spk] = np.concatenate(
                         (spk2audio[c_spk], np.zeros_like(c_audio[:, -residual:])),
                         axis=-1,
                     )
-
+                if self.cfg.save_anechoic:
+                    for c_spk in spk2audio.keys():
+                        spk2audio_anechoic[c_spk] = np.concatenate(
+                        (spk2audio_anechoic[c_spk], np.zeros_like(c_audio_anechoic[:, -residual:])),
+                        axis=-1,
+                    )
             else:
                 output_audio[:, offset : offset + c_audio.shape[-1]] += c_audio
+
             if self.cfg.save_spk:
                 c_spk = cut.supervisions[0].speaker
                 spk2audio[c_spk][:, offset : offset + c_audio.shape[-1]] += c_audio
+                if self.cfg.save_anechoic:
+                    c_spk = cut.supervisions[0].speaker
+                    spk2audio_anechoic[c_spk][:, offset: offset + c_audio_anechoic.shape[-1]] += c_audio_anechoic
                 # except ValueError:
                 #    residual = (offset + c_audio.shape[-1]) - spk2audio[c_spk].shape[-1]
                 #    spk2audio[c_spk][:, offset: offset + c_audio.shape[-1]] += c_audio[:, :-residual]
@@ -412,16 +475,20 @@ class ConversationalMeetingSimulator:
             if self.noise_files is None:
                 output_audio = self.add_gaussian_noise(output_audio, min_lvl, (-30, 3))
             else:
-                output_audio = self.add_real_noise(output_audio, min_lvl, (-30, 3))
+                output_audio = self.add_real_noise(output_audio, min_lvl, self.cfg.noise_rel_gain)
 
         maxval = np.amax(np.abs(output_audio))
         gain_f = 0.99 / maxval
 
         if maxval > 0.99:
             output_audio = output_audio * gain_f
-            if self.save_spk:
+            if self.cfg.save_spk:
                 for k in spk2audio.keys():
                     spk2audio[k] = spk2audio[k] * gain_f
+
+                if self.cfg.save_anechoic:
+                    for k in spk2audio.keys():
+                        spk2audio_anechoic[k] = spk2audio_anechoic[k] * gain_f
 
         # Generate unique filename
         recording_id = str(uuid4())
@@ -435,18 +502,25 @@ class ConversationalMeetingSimulator:
         if self.cfg.save_spk:
             for k in spk2audio:
                 sf.write(
-                    os.path.join(self.cfg.output_dir, f"{recording_id}-spk-{k}.wav"),
+                    os.path.join(self.output_dir, f"{recording_id}-spk-{k}.wav"),
                     spk2audio[k].T,
                     self.cfg.samplerate,
                 )
+            if self.cfg.save_anechoic:
+                for k in spk2audio_anechoic:
+                    sf.write(
+                        os.path.join(self.output_dir, f"{recording_id}-spk-{k}-anechoic.wav"),
+                        spk2audio_anechoic[k].T,
+                        self.cfg.samplerate,
+                    )
 
         # Create Lhotse Recording
         recording = Recording(
             id=recording_id,
             sources=[AudioSource(type="file", channels=[0], source=audio_path)],
-            sampling_rate=self.sample_rate,
+            sampling_rate=self.cfg.samplerate,
             num_samples=output_audio.shape[-1],
-            duration=output_audio.shape[-1] / self.sample_rate,
+            duration=output_audio.shape[-1] / self.cfg.samplerate,
         )
 
         # Create Lhotse Supervisions for each utterance
@@ -494,13 +568,6 @@ class ConversationalMeetingSimulator:
             )
             supervisions.append(supervision)
 
-        spk2sup = {x.speaker for x in supervision}
-        for spk in spk2sup.keys():
-            current = spk2sup[spk]
-            if not sorted(current) == current:
-                print("issues")
-                import pdb
 
-                pdb.set_trace()
 
         return recording, supervisions
