@@ -15,7 +15,7 @@ save_spk: True # save each speaker stream
 duration: 35
 manifest_prefix: librispeech
 librispeech_dir: /disks/disk1/scornell/LibriSpeech
-manifest_dir: /disks/disk1/scornell/LibriSpeech
+librispeech_align: /disks/disk1/scornell/librispeech_align/librispeech_align/LibriSpeech
 dset_splits:
   - train-clean-100
 split_fa_factor: 0.2

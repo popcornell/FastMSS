@@ -43,7 +43,7 @@ def main(cfg: DictConfig) -> None:
 
         prepare_librispeech(
             corpus_dir=cfg.librispeech_dir,
-            alignments_dir=cfg.librispeech_dir,
+            alignments_dir=cfg.librispeech_align,
             output_dir=os.path.join(cfg.output_dir, "manifests"),
             dataset_parts=cfg.dset_splits,
             num_jobs=cfg.n_jobs,
@@ -51,18 +51,16 @@ def main(cfg: DictConfig) -> None:
 
         all_cuts = []
         for split in cfg.dset_splits:
-            c_rec = lhotse.load_manifest(
-                Path(lhotse_manifest_dir)
-                / f"{cfg.manifest_prefix}_recordings_{split}.jsonl.gz"
-            )
+            c_rec = lhotse.load_manifest(os.path.join(cfg.output_dir, "manifests",
+                f"{cfg.manifest_prefix}_recordings_{split}.jsonl.gz"))
             c_sup = lhotse.load_manifest(
-                Path(lhotse_manifest_dir)
-                / f"{cfg.manifest_prefix}_supervisions_{split}.jsonl.gz"
-            )
+                os.path.join(cfg.output_dir, "manifests", f"{cfg.manifest_prefix}_supervisions_{split}.jsonl.gz"
+            ))
             c_cut = CutSet.from_manifests(recordings=c_rec, supervisions=c_sup)
-        all_cuts.append(c_cut)
+            all_cuts.append(c_cut)
         all_cuts = combine_manifests(all_cuts)
         logger.info("Saving source CutSet to disk")
+
         all_cuts.to_file(
             os.path.join(cfg.output_dir, "manifests", "all_cuts_orig.jsonl.gz")
         )
@@ -77,10 +75,11 @@ def main(cfg: DictConfig) -> None:
             )
         logger.info(f"Before splitting with forced alignment: {len(all_cuts)} cuts.")
         all_cuts = split_monocuts_batch(
-            all_cuts, cfg.split_fa_factor, num_jobs=cfg.n_jobs
-        )
+            all_cuts, cfg.split_fa_factor, num_jobs=cfg.n_jobs)
         logger.info(f"After splitting with forced alignment: {len(all_cuts)} cuts.")
         logger.info(f"Saving to disk splitted cuts.")
+        if len(all_cuts) == 0:
+            raise RuntimeError("No cuts left, did you specify the correct path for the forced alignment ?. Exiting.")
         all_cuts.to_file(os.path.join(cfg.output_dir, "manifests", "all_cuts.jsonl.gz"))
 
     if cfg.stage <= 2:
