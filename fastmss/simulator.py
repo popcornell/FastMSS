@@ -3,14 +3,13 @@ import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-from lhotse.supervision import AlignmentItem, SupervisionSegment
+
 import numpy as np
 import soundfile as sf
-from lhotse import (AudioSource, MonoCut, Recording, RecordingSet,
-                    SupervisionSet)
+from lhotse import AudioSource, MonoCut, Recording, RecordingSet, SupervisionSet
+from lhotse.supervision import AlignmentItem, SupervisionSegment
 from lhotse.utils import add_durations, uuid4
-from scipy.signal import fftconvolve, firwin, convolve
-
+from scipy.signal import convolve, fftconvolve, firwin
 
 from fastmss.hmm_turn_taking import TransitionParams, TransitionType
 
@@ -200,7 +199,7 @@ class ConversationalMeetingSimulator:
 
         # Generate random noise level between 0 and max allowed
         # Using a range that gives reasonable noise levels
-        #noise_level_db = np.random.uniform(max_noise_level_db - 20, max_noise_level_db)
+        # noise_level_db = np.random.uniform(max_noise_level_db - 20, max_noise_level_db)
         noise_rms = 10 ** (max_noise_level_db / 20.0)
 
         # Generate Gaussian noise
@@ -210,7 +209,6 @@ class ConversationalMeetingSimulator:
         noisy_audio = audio + noise
 
         return noisy_audio
-
 
     def add_real_noise(self, audio, min_speech_level_db, range_db_offset=(-15, 3)):
         # sample real noise clip
@@ -226,13 +224,14 @@ class ConversationalMeetingSimulator:
         if len(info) > audio.shape[-1]:
             cursor = np.random.randint(0, len(info) - audio.shape[-1])
         elif len(info) < audio.shape[-1]:
-            raise ValueError(f"Audio file {c_noise} is less than the desired length {tgt_len}. Exiting, background noise files should "
-                             f"be long enough to cover the whole synthetic meeting.")
+            raise ValueError(
+                f"Audio file {c_noise} is less than the desired length {tgt_len}. Exiting, background noise files should "
+                f"be long enough to cover the whole synthetic meeting."
+            )
         else:
             cursor = 0
 
-
-        c_noise, _ = sf.read(c_noise, start=cursor, stop=cursor+audio.shape[-1])
+        c_noise, _ = sf.read(c_noise, start=cursor, stop=cursor + audio.shape[-1])
 
         if len(audio) == 0:
             return audio
@@ -247,18 +246,16 @@ class ConversationalMeetingSimulator:
 
         # Generate random noise level between 0 and max allowed
         # Using a range that gives reasonable noise levels
-        #noise_level_db = np.random.uniform(max_noise_level_db - 20, max_noise_level_db)
+        # noise_level_db = np.random.uniform(max_noise_level_db - 20, max_noise_level_db)
         noise_rms = 10 ** (max_noise_level_db / 20.0)
 
         c_noise = c_noise / (np.std(c_noise) + 1e-8)
-        c_noise = c_noise*noise_rms
-
+        c_noise = c_noise * noise_rms
 
         # Add noise to signal
         noisy_audio = audio + c_noise
 
         return noisy_audio
-
 
     def normalize_to(self, audio, target_level_db):
         """
@@ -344,7 +341,7 @@ class ConversationalMeetingSimulator:
 
             # Load audio # optionally perturb speed here ? I think it is faster with torchaudio.
             if self.cfg.speed_perturb:
-            # keep these fixed
+                # keep these fixed
                 factor = np.random.uniform(*self.cfg.speed_perturb_range)
                 cut = cut.perturb_speed(factor)
 
@@ -416,13 +413,21 @@ class ConversationalMeetingSimulator:
                 c_rir, fs = sf.read(c_rir_file)
                 assert fs == self.cfg.samplerate
                 # load anechoic rir too
-                c_rir_anechoic = str(Path(c_rir_file).parent / Path(c_rir_file).stem) + "-anechoic.flac"
+                c_rir_anechoic = (
+                    str(Path(c_rir_file).parent / Path(c_rir_file).stem)
+                    + "-anechoic.flac"
+                )
                 c_rir_anechoic, fs = sf.read(c_rir_anechoic)
                 assert fs == self.cfg.samplerate
-                c_audio_anechoic = convolve(c_audio, c_rir_anechoic[None, :], mode="full")
+                c_audio_anechoic = convolve(
+                    c_audio, c_rir_anechoic[None, :], mode="full"
+                )
                 c_audio = convolve(c_audio, c_rir[None, :], mode="full")
-                c_audio_anechoic = np.pad(c_audio_anechoic, ((0, 0), (0, c_audio.shape[-1] - c_audio_anechoic.shape[-1])), mode="constant")
-
+                c_audio_anechoic = np.pad(
+                    c_audio_anechoic,
+                    ((0, 0), (0, c_audio.shape[-1] - c_audio_anechoic.shape[-1])),
+                    mode="constant",
+                )
 
             else:
                 assert self.cfg.save_anechoic == False
@@ -430,7 +435,7 @@ class ConversationalMeetingSimulator:
             c_audio, c_gain = self.normalize_to(c_audio, c_speech_lvl)
 
             if self.cfg.reverberate:
-                c_audio_anechoic = c_gain*c_audio_anechoic
+                c_audio_anechoic = c_gain * c_audio_anechoic
 
             offset = int(offset * self.cfg.samplerate)
             maxlen = output_audio.shape[-1]
@@ -450,9 +455,12 @@ class ConversationalMeetingSimulator:
                 if self.cfg.save_anechoic:
                     for c_spk in spk2audio.keys():
                         spk2audio_anechoic[c_spk] = np.concatenate(
-                        (spk2audio_anechoic[c_spk], np.zeros_like(c_audio_anechoic[:, -residual:])),
-                        axis=-1,
-                    )
+                            (
+                                spk2audio_anechoic[c_spk],
+                                np.zeros_like(c_audio_anechoic[:, -residual:]),
+                            ),
+                            axis=-1,
+                        )
             else:
                 output_audio[:, offset : offset + c_audio.shape[-1]] += c_audio
 
@@ -461,7 +469,9 @@ class ConversationalMeetingSimulator:
                 spk2audio[c_spk][:, offset : offset + c_audio.shape[-1]] += c_audio
                 if self.cfg.save_anechoic:
                     c_spk = cut.supervisions[0].speaker
-                    spk2audio_anechoic[c_spk][:, offset: offset + c_audio_anechoic.shape[-1]] += c_audio_anechoic
+                    spk2audio_anechoic[c_spk][
+                        :, offset : offset + c_audio_anechoic.shape[-1]
+                    ] += c_audio_anechoic
                 # except ValueError:
                 #    residual = (offset + c_audio.shape[-1]) - spk2audio[c_spk].shape[-1]
                 #    spk2audio[c_spk][:, offset: offset + c_audio.shape[-1]] += c_audio[:, :-residual]
@@ -475,7 +485,9 @@ class ConversationalMeetingSimulator:
             if self.noise_files is None:
                 output_audio = self.add_gaussian_noise(output_audio, min_lvl, (-30, 3))
             else:
-                output_audio = self.add_real_noise(output_audio, min_lvl, self.cfg.noise_rel_gain)
+                output_audio = self.add_real_noise(
+                    output_audio, min_lvl, self.cfg.noise_rel_gain
+                )
 
         maxval = np.amax(np.abs(output_audio))
         gain_f = 0.99 / maxval
@@ -509,7 +521,9 @@ class ConversationalMeetingSimulator:
             if self.cfg.save_anechoic:
                 for k in spk2audio_anechoic:
                     sf.write(
-                        os.path.join(self.output_dir, f"{recording_id}-spk-{k}-anechoic.wav"),
+                        os.path.join(
+                            self.output_dir, f"{recording_id}-spk-{k}-anechoic.wav"
+                        ),
                         spk2audio_anechoic[k].T,
                         self.cfg.samplerate,
                     )
@@ -567,7 +581,5 @@ class ConversationalMeetingSimulator:
                 },
             )
             supervisions.append(supervision)
-
-
 
         return recording, supervisions

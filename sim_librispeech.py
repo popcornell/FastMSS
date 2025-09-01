@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 def discard(x, duration):
-
     info = sf.SoundFile(x)
     # allow for a little longer since the meetings can be a bit longer when there
     # are many speakers...
@@ -34,42 +33,47 @@ def discard(x, duration):
         return None
 
 
-@hydra.main(config_path="config", config_name="ami")
+@hydra.main(config_path="config", config_name="librispeech")
 def main(cfg: DictConfig) -> None:
 
-    if cfg.stage <= 1:
-        Path(cfg.output_dir).mkdir(exist_ok=True)
+    if cfg.stage <= 0:
+        lhotse_manifest_dir = os.path.join(cfg.output_dir, "manifests")
+        Path(lhotse_manifest_dir).mkdir(parents=True, exist_ok=True)
+        from lhotse.recipes.librispeech import prepare_librispeech
+
+        prepare_librispeech(
+            corpus_dir=cfg.librispeech_dir,
+            alignments_dir=cfg.librispeech_dir,
+            output_dir=os.path.join(cfg.output_dir, "manifests"),
+            dataset_parts=cfg.dset_splits,
+            num_jobs=cfg.n_jobs,
+        )
+
         all_cuts = []
         for split in cfg.dset_splits:
             c_rec = lhotse.load_manifest(
-                Path(cfg.manifest_dir)
+                Path(lhotse_manifest_dir)
                 / f"{cfg.manifest_prefix}_recordings_{split}.jsonl.gz"
             )
             c_sup = lhotse.load_manifest(
-                Path(cfg.manifest_dir)
+                Path(lhotse_manifest_dir)
                 / f"{cfg.manifest_prefix}_supervisions_{split}.jsonl.gz"
             )
             c_cut = CutSet.from_manifests(recordings=c_rec, supervisions=c_sup)
-            c_cut = c_cut.trim_to_supervisions(
-                keep_overlapping=False,
-                min_duration=0.0,
-                num_jobs=cfg.n_jobs,
-                keep_all_channels=False,
-            )
-            all_cuts.append(c_cut)
+        all_cuts.append(c_cut)
         all_cuts = combine_manifests(all_cuts)
         logger.info("Saving source CutSet to disk")
-        (Path(cfg.output_dir) / "manifests").mkdir(exist_ok=True)
-        all_cuts.to_file(os.path.join(cfg.output_dir, "manifests", "all_cuts.jsonl.gz"))
+        all_cuts.to_file(
+            os.path.join(cfg.output_dir, "manifests", "all_cuts_orig.jsonl.gz")
+        )
 
-    """
     if cfg.stage <= 1:
         try:
             all_cuts
         except NameError:
             logger.info("Loading source CutSet from disk")
             all_cuts = lhotse.load_manifest(
-                os.path.join(cfg.output_dir, "manifests", "all_cuts.jsonl.gz")
+                os.path.join(cfg.output_dir, "manifests", "all_cuts_orig.jsonl.gz")
             )
         logger.info(f"Before splitting with forced alignment: {len(all_cuts)} cuts.")
         all_cuts = split_monocuts_batch(
@@ -77,10 +81,7 @@ def main(cfg: DictConfig) -> None:
         )
         logger.info(f"After splitting with forced alignment: {len(all_cuts)} cuts.")
         logger.info(f"Saving to disk splitted cuts.")
-        all_cuts.to_file(
-            os.path.join(cfg.output_dir, "manifests", "all_cuts_splitted.jsonl.gz")
-        )
-    """
+        all_cuts.to_file(os.path.join(cfg.output_dir, "manifests", "all_cuts.jsonl.gz"))
 
     if cfg.stage <= 2:
         if cfg.noise_folders is not None:

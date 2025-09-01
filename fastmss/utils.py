@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -7,11 +8,11 @@ from lhotse import MonoCut, Recording
 from lhotse.parallel import parallel_map
 from lhotse.supervision import AlignmentItem, SupervisionSegment
 from tqdm import tqdm
-from typing import List, Optional, Tuple
-import logging
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -251,6 +252,3 @@ def split_monocuts_batch(
     ):
         result.extend(elem)
     return lhotse.CutSet(result)
-
-
-
