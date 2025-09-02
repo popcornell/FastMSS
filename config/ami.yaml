@@ -7,7 +7,7 @@ hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
 
-n_meetings: 5000
+n_meetings: 50
 min_max_spk: [2, 5] # min max speakers.
 save_anechoic: True # save also anechoic
 save_spk: True # save each speaker stream
@@ -40,7 +40,7 @@ noise_folders:
 filter_noise_len: 20 # remove shorter than 20 seconds
 
 reverberate: True
-n_rirs: 1000
+n_rirs: 10
 n_pos_rirs: 50
 rt60: [0.1, 0.7]
 room_sz: [5, 10]
@@ -53,11 +53,11 @@ save_cutset: True
 drop_without_align: True
 
 
-#mic_type: circular_array
+mic_type: circular
 # todo add multichannel.
-#circular_array: # match AMI
-#  diameter: 0.08
-#  n_mics: 8
+circular: # match AMI
+  diameter: [0.08, 0.085]
+  n_mics: 8
 # linear array
 # displaced array
 # add support also for hrtf ? it would be cool !

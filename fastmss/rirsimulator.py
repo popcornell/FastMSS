@@ -3,6 +3,9 @@ from pathlib import Path
 import numpy as np
 import pyroomacoustics
 import soundfile as sf
+import math
+
+from typing import Iterable
 
 
 class RIRSimulator:
@@ -25,9 +28,47 @@ class RIRSimulator:
             if distance(c_src_pos, mic_pos) > 1:
                 return c_src_pos
 
+    @staticmethod
+    def create_circular_mic_array(center, diameter, num_mics):
+        """
+        Creates a circular microphone array around a center point.
 
-    def sample_circ_array(self, diameter, n_mics):
-        pass
+        Parameters:
+        center (list): 3D coordinates [x, y, z] of the center point
+        diameter (float): Diameter of the circular array
+        num_mics (int): Number of microphones in the array
+
+        Returns:
+        list: List of 3D coordinates, each representing a microphone position
+        """
+        if isinstance(num_mics, Iterable):
+            num_mics = np.random.randint(num_mics[0], num_mics[-1] + 1)
+
+        if isinstance(diameter, Iterable):
+            diameter = np.random.uniform(diameter[0], diameter[-1] + 1e-8)
+
+        if num_mics <= 0:
+            return []
+
+        radius = diameter / 2.0
+        mic_positions = []
+
+        # Calculate angular separation between microphones
+        angle_step = 2 * math.pi / num_mics
+
+        for i in range(num_mics):
+            # Calculate angle for this microphone
+            angle = i * angle_step
+
+            # Calculate position relative to center
+            # Assuming the array lies in the XY plane (constant Z)
+            x = center[0] + radius * math.cos(angle)
+            y = center[1] + radius * math.sin(angle)
+            z = center[2]  # Keep same Z coordinate as center
+
+            mic_positions.append([x, y, z])
+
+        return mic_positions
 
     def sample_linear_array(self, ):
         raise NotImplementedError
@@ -67,7 +108,6 @@ class RIRSimulator:
             break
 
         # create also direct path room here
-        pass
         anechoic = pyroomacoustics.ShoeBox(
             room_dim,
             fs=self.cfg.samplerate,
@@ -82,9 +122,21 @@ class RIRSimulator:
         mic_z = np.random.uniform(0.5, z - delta_dist)
         # add microphone in the room randomly
 
-        mic_locs = np.array([mic_x, mic_y, mic_z])
-        room.add_microphone(mic_locs)
-        anechoic.add_microphone(mic_locs)
+
+        if self.cfg.mic_type == "single":
+            mic_locs = np.array([mic_x, mic_y, mic_z])
+            anechoic.add_microphone(mic_locs)
+            room.add_microphone(mic_locs)
+        elif self.cfg.mic_type == "circular":
+            mic_locs = np.array([mic_x, mic_y, mic_z])
+            circ_arr_coords = self.create_circular_mic_array([mic_x, mic_y, mic_z], self.cfg.circular.diameter, self.cfg.circular.n_mics)
+            for coord in circ_arr_coords:
+                room.add_microphone(np.array(coord))
+                anechoic.add_microphone(np.array(coord))
+        else:
+            raise NotImplementedError
+
+
 
         for src in range(self.cfg.n_pos_rirs):
             tmp = self.sample_src_pos(l, w, mic_locs)
@@ -95,11 +147,19 @@ class RIRSimulator:
         anechoic.compute_rir()
         output_dir = Path(self.cfg.output_dir, "rirs", f"{meeting_id}").absolute()
         output_dir.mkdir(exist_ok=True, parents=True)
-        # maxlen = max([len(room.rir[0][x]) for x in range(n_positions)])
+        #
 
         output_rirs = []
         for src in range(self.cfg.n_pos_rirs):
-            c_rir = room.rir[0][src]
+            maxlen = max([len(room.rir[x][src]) for x in range(len(room.rir))])
+            # pad and then save jointly.
+            tmp = []
+            for mic_inx in range(len(room.rir)):
+                c_rir = room.rir[mic_inx][src]
+                if c_rir.shape[0] < maxlen:
+                    c_rir = np.pad(c_rir, (0, maxlen - c_rir.shape[0]))
+                tmp.append(c_rir)
+            c_rir = np.stack(tmp, -1)
             # need to handle multichannel here, 0 is the first channel.
             flac_path = str(output_dir / Path(meeting_id + f"_{src}.flac"))
             output_rirs.append(flac_path)
@@ -107,7 +167,7 @@ class RIRSimulator:
 
         for src in range(self.cfg.n_pos_rirs):
             c_rir = anechoic.rir[0][src]
-            # need to handle multichannel here, 0 is the first channel.
+            # for anechoic just use the first channel always !
             flac_path = str(output_dir / Path(meeting_id + f"_{src}-anechoic.flac"))
             sf.write(flac_path, c_rir, samplerate=self.cfg.samplerate)
 

@@ -384,7 +384,10 @@ class ConversationalMeetingSimulator:
             speech_lvls.append(base_gain + c_gain)
 
         # fetch the maximum length
+        #if self.cfg.reverberate == False or self.cfg.mic_type == "single":
         output_audio = np.zeros((1, int(current_time * self.cfg.samplerate)))
+        #elif self.cfg.reverberate == True and self.cfg.mic_type == "circular":
+        #    output_audio = np.zeros((1, int(current_time * self.cfg.samplerate)))
 
         if self.cfg.save_spk:
             # we need to check if all cuts have only one supervions TODO
@@ -422,12 +425,26 @@ class ConversationalMeetingSimulator:
                 c_audio_anechoic = convolve(
                     c_audio, c_rir_anechoic[None, :], mode="full"
                 )
-                c_audio = convolve(c_audio, c_rir[None, :], mode="full")
+
+                if c_rir.ndim ==1:
+                    c_rir = c_rir[:, np.newaxis]
+                c_audio = convolve(c_audio, c_rir.T, mode="full")
+
+                if c_audio.shape[0] > output_audio.shape[0]:
+                    output_audio = np.pad(
+                    output_audio,
+                    ((0,  c_audio.shape[0] -1), (0, 0)),
+                    mode="constant")
+
                 c_audio_anechoic = np.pad(
                     c_audio_anechoic,
                     ((0, 0), (0, c_audio.shape[-1] - c_audio_anechoic.shape[-1])),
                     mode="constant",
                 )
+
+                if c_audio_anechoic.shape[-1] > c_audio.shape[-1]:
+                    import pdb
+                    pdb.set_trace()
 
             else:
                 assert self.cfg.save_anechoic == False
@@ -441,34 +458,22 @@ class ConversationalMeetingSimulator:
             maxlen = output_audio.shape[-1]
             if (offset + c_audio.shape[-1]) > maxlen:
                 residual = (offset + c_audio.shape[-1]) - maxlen
-                output_audio[:, offset : offset + c_audio.shape[-1]] += c_audio[
-                    :, :-residual
-                ]
-                output_audio = np.concatenate(
-                    (output_audio, c_audio[:, -residual:]), axis=-1
-                )
+                output_audio = np.pad(output_audio, ((0, 0), (0, residual)), mode="constant")
+
                 for c_spk in spk2audio.keys():
-                    spk2audio[c_spk] = np.concatenate(
-                        (spk2audio[c_spk], np.zeros_like(c_audio[:, -residual:])),
-                        axis=-1,
-                    )
+                    spk2audio[c_spk] = np.pad(spk2audio[c_spk], ((0, 0), (0, residual)), mode="constant")
                 if self.cfg.save_anechoic:
                     for c_spk in spk2audio.keys():
-                        spk2audio_anechoic[c_spk] = np.concatenate(
-                            (
-                                spk2audio_anechoic[c_spk],
-                                np.zeros_like(c_audio_anechoic[:, -residual:]),
-                            ),
-                            axis=-1,
-                        )
-            else:
-                output_audio[:, offset : offset + c_audio.shape[-1]] += c_audio
+                        spk2audio_anechoic[c_spk] = np.pad(spk2audio_anechoic[c_spk], ((0, 0), (0, residual)), mode="constant")
+
+
+            output_audio[:, offset : offset + c_audio.shape[-1]] += c_audio
 
             if self.cfg.save_spk:
                 c_spk = cut.supervisions[0].speaker
-                spk2audio[c_spk][:, offset : offset + c_audio.shape[-1]] += c_audio
+                # save only first channel
+                spk2audio[c_spk][:, offset : offset + c_audio.shape[-1]] += c_audio[0][None, :]
                 if self.cfg.save_anechoic:
-                    c_spk = cut.supervisions[0].speaker
                     spk2audio_anechoic[c_spk][
                         :, offset : offset + c_audio_anechoic.shape[-1]
                     ] += c_audio_anechoic

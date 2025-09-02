@@ -62,26 +62,6 @@ def main(cfg: DictConfig) -> None:
         (Path(cfg.output_dir) / "manifests").mkdir(exist_ok=True)
         all_cuts.to_file(os.path.join(cfg.output_dir, "manifests", "all_cuts.jsonl.gz"))
 
-    """
-    if cfg.stage <= 1:
-        try:
-            all_cuts
-        except NameError:
-            logger.info("Loading source CutSet from disk")
-            all_cuts = lhotse.load_manifest(
-                os.path.join(cfg.output_dir, "manifests", "all_cuts.jsonl.gz")
-            )
-        logger.info(f"Before splitting with forced alignment: {len(all_cuts)} cuts.")
-        all_cuts = split_monocuts_batch(
-            all_cuts, cfg.split_fa_factor, num_jobs=cfg.n_jobs
-        )
-        logger.info(f"After splitting with forced alignment: {len(all_cuts)} cuts.")
-        logger.info(f"Saving to disk splitted cuts.")
-        all_cuts.to_file(
-            os.path.join(cfg.output_dir, "manifests", "all_cuts_splitted.jsonl.gz")
-        )
-    """
-
     if cfg.stage <= 2:
         if cfg.noise_folders is not None:
             logger.info("Parsing background noise files.")
@@ -126,6 +106,8 @@ def main(cfg: DictConfig) -> None:
         simulator = RIRSimulator(cfg)
 
         worker = partial(simulator.gen_rirs)
+        #for i in range(10):
+        #    simulator.gen_rirs(str(i))
 
         meeting_ids = iter([f"room_{x}" for x in range(cfg.n_rirs)])
         all_rooms = []
@@ -182,9 +164,7 @@ def main(cfg: DictConfig) -> None:
 
         uuids = iter([f"simulation_{x}" for x in range(cfg.n_meetings)])
         work = partial(simulator.gen_audio)
-        # for i in range(10):
-        #    simulator.gen_audio(i)
-        # raise BufferError
+
         recordings = []
         supervisions = []
         for c_rec, c_sup in tqdm(
