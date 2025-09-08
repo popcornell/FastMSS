@@ -97,17 +97,12 @@ def main(cfg: DictConfig) -> None:
             # e.g. WHAM or SINS
             logger.info(f"Noise files paths saved in {out_file}")
             # TODO impulsive noises ?
-        else:
-            noise_files = None
 
     if cfg.stage <= 3:
         logger.info("Simulating RIRs using Pyroomacoustics")
 
         simulator = RIRSimulator(cfg)
-
         worker = partial(simulator.gen_rirs)
-        #for i in range(10):
-        #    simulator.gen_rirs(str(i))
 
         meeting_ids = iter([f"room_{x}" for x in range(cfg.n_rirs)])
         all_rooms = []

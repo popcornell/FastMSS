@@ -8,11 +8,11 @@ hydra: # overrides standard hydra output dir
     dir: ${output_dir}
 
 n_meetings: 5
-min_max_spk: [2, 5] # min max speakers.
+min_max_spk: [3, 5] # min max speakers.
 save_anechoic: True # save also anechoic
 save_spk: True # save each speaker stream
 
-duration: 35
+duration: 600
 manifest_prefix: librispeech
 librispeech_dir: /disks/disk1/scornell/LibriSpeech
 librispeech_align: /disks/disk1/scornell/librispeech_align/librispeech_align/LibriSpeech
@@ -54,7 +54,7 @@ save_cutset: True
 drop_without_align: True
 
 
-#mic_type: single
+mic_type: single
 # todo add multichannel.
 # circular_array
 # linear array
