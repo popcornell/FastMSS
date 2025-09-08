@@ -389,14 +389,11 @@ class ConversationalMeetingSimulator:
         #elif self.cfg.reverberate == True and self.cfg.mic_type == "circular":
         #    output_audio = np.zeros((1, int(current_time * self.cfg.samplerate)))
 
-        if self.cfg.save_spk:
-            # we need to check if all cuts have only one supervions TODO
-            all_spk = list(set([x.supervisions[0].speaker for x in utterances]))
-            spk2audio = {x: deepcopy(output_audio) for x in all_spk}
 
-            if self.cfg.save_anechoic:
-                all_spk = list(set([x.supervisions[0].speaker for x in utterances]))
-                spk2audio_anechoic = {x: deepcopy(output_audio) for x in all_spk}
+        # we need to check if all cuts have only one supervions TODO
+        all_spk = list(set([x.supervisions[0].speaker for x in utterances]))
+        spk2audio = {x: deepcopy(output_audio) for x in all_spk}
+        spk2audio_anechoic = {x: deepcopy(output_audio) for x in all_spk}
 
         for cut, offset, c_speech_lvl in zip(utterances, offsets, speech_lvls):
             # load audio here
