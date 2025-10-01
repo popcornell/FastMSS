@@ -1,3 +1,6 @@
+torch
+torchaudio
 hydra-core
 lhotse
 pyroomacoustics
+tqdm
