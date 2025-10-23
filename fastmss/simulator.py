@@ -58,6 +58,7 @@ class ConversationalMeetingSimulator:
         prev_len = len(all_cuts)
         after_len = 0
         spk2cuts = {}
+        all_cuts = all_cuts.to_eager()
         for cut in all_cuts:
             if (
                 cut.duration > self.cfg.max_utt_duration
@@ -276,7 +277,7 @@ class ConversationalMeetingSimulator:
 
         # Avoid division by zero
         if rms == 0:
-            return audio
+            return audio, 1e-8
 
         # Convert target level from dB to linear scale
         # Assuming 0 dB corresponds to RMS = 1.0
