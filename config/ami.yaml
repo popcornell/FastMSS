@@ -2,19 +2,19 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-output_dir: /disks/disk1/scornell/FastMSS/ami-synth-ihm
+output_dir: /lustre/fsn1/projects/rech/par/ulf22fh/ami-synth-ihm-train
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
 
-n_meetings: 50
-min_max_spk: [2, 5] # min max speakers.
+n_meetings: 10000
+min_max_spk: [2, 3] # min max speakers.
 save_anechoic: True # save also anechoic
-save_spk: True # save each speaker stream
+save_spk: False # save each speaker stream
 
-duration: 35
+duration: 60
 manifest_prefix: ami-ihm
-manifest_dir: /disks/disk1/scornell/AMI
+manifest_dir: /lustre/fswork/projects/rech/par/ulf22fh/AMI
 dset_splits:
   - train
 split_fa_factor: 0.2
@@ -26,7 +26,7 @@ use_markov: True
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
 add_noise: True
-noise_rel_gain: [-12, 8]
+noise_rel_gain: [-24, 8]
 speed_perturb: False # this makes generation reaaally slow.
 speed_perturb_range: [0.95, 1.05]
 use_fir: False
@@ -35,12 +35,12 @@ use_fir: False
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
 noise_folders:
-  - /disks/disk1/scornell/FastMSS/wham_noise_16khz
+  - /lustre/fswork/projects/rech/par/ulf22fh/FastMSS/wham_noise_16kHz/
 
 filter_noise_len: 20 # remove shorter than 20 seconds
 
 reverberate: True
-n_rirs: 10
+n_rirs: 2000
 n_pos_rirs: 50
 rt60: [0.1, 0.7]
 room_sz: [5, 10]
@@ -52,7 +52,7 @@ rand_disp: 0.0 # if save anechoic this should be 0.0 probably
 save_cutset: True
 drop_without_align: True
 
-mic_type: circular
+mic_type: single
 # todo add multichannel.
 circular: # match AMI
   diameter: [0.08, 0.085]

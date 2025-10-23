@@ -2,22 +2,23 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-output_dir: /disks/disk1/scornell/FastMSS/librispeech-synth
+output_dir: /lustre/fsn1/projects/rech/par/ulf22fh//librispeech-synth-noisy
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
 
 n_meetings: 5
-min_max_spk: [3, 5] # min max speakers.
+min_max_spk: [2, 5] # min max speakers.
 save_anechoic: True # save also anechoic
 save_spk: True # save each speaker stream
 
 duration: 600
 manifest_prefix: librispeech
-librispeech_dir: /disks/disk1/scornell/LibriSpeech
-librispeech_align: /disks/disk1/scornell/librispeech_align/librispeech_align/LibriSpeech
+librispeech_dir: /lustre/fsn1/projects/rech/par/ulf22fh//LibriSpeech
+librispeech_align: /lustre/fsn1/projects/rech/par/ulf22fh/LibriSpeechAlign/LibriSpeech
 dset_splits:
   - train-clean-100
+  - train-clean-360
 split_fa_factor: 0.2
 max_utt_duration: 60
 min_utt_duration: 0.3
@@ -27,7 +28,7 @@ use_markov: True
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
 add_noise: True
-noise_rel_gain: [-6, 8]
+noise_rel_gain: [-24, 8]
 speed_perturb: False # this makes generation reaaally slow.
 speed_perturb_range: [0.95, 1.05]
 use_fir: False
@@ -36,7 +37,7 @@ use_fir: False
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
 noise_folders:
- # - /disks/disk1/scornell/FastMSS/wham_noise_16khz
+  - /lustre/fswork/projects/rech/par/ulf22fh/FastMSS/wham_noise_16kHz/
 
 filter_noise_len: 20 # remove shorter than 20 seconds
 
