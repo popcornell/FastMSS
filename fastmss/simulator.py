@@ -377,8 +377,9 @@ class ConversationalMeetingSimulator:
                         ch = np.random.randint(0, c_noise.shape[-1])
                         c_noise = c_noise[:, ch]
 
-                # Normalize each segment before concatenation (unit variance)
-                c_noise = c_noise / (np.std(c_noise) + 1e-8)
+                # Normalize each segment before concatenation to unit RMS
+                rms = np.sqrt(np.mean(c_noise**2))
+                c_noise = c_noise / (rms + 1e-8)
 
                 noise_segments.append(c_noise)
                 total_sampled += len(c_noise)
@@ -393,6 +394,11 @@ class ConversationalMeetingSimulator:
             elif len(c_noise) > tgt_len:
                 # Trim to exact length
                 c_noise = c_noise[:tgt_len]
+
+            # Re-normalize after concatenation (crossfading changes the RMS)
+            # Use RMS normalization instead of std for consistency with speech normalization
+            rms = np.sqrt(np.mean(c_noise**2))
+            c_noise = c_noise / (rms + 1e-8)
         else:
             # Original single-noise behavior
             c_noise_file = str(np.random.choice(self.noise_files))
@@ -415,7 +421,9 @@ class ConversationalMeetingSimulator:
                 c_noise = repeat_audio_with_crossfade(c_noise, tgt_len, 16000)
 
             # Normalize before applying gain
-            c_noise = c_noise / (np.std(c_noise) + 1e-8)
+            # Use RMS normalization instead of std for consistency with speech normalization
+            rms = np.sqrt(np.mean(c_noise**2))
+            c_noise = c_noise / (rms + 1e-8)
 
         # Calculate maximum allowed noise level (5 dB below min speech level)
         max_noise_level_db = min_speech_level_db + np.random.uniform(*range_db_offset)
