@@ -393,6 +393,9 @@ class ConversationalMeetingSimulator:
             elif len(c_noise) > tgt_len:
                 # Trim to exact length
                 c_noise = c_noise[:tgt_len]
+
+            # Re-normalize after concatenation (crossfading changes the RMS)
+            c_noise = c_noise / (np.std(c_noise) + 1e-8)
         else:
             # Original single-noise behavior
             c_noise_file = str(np.random.choice(self.noise_files))
