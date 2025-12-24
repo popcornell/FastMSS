@@ -2,24 +2,23 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-output_dir: /lustre/fsn1/projects/rech/par/ulf22fh//librispeech-synth-noisy-manyspeakers-large-v3
+output_dir: /raid/users/popcornell/FastMSS/generated/train
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
 
-n_meetings: 15000
-min_max_spk: [2, 5] # min max speakers.
+n_meetings: 5000
+min_max_spk: [2, 8] # min max speakers.
 max_concurrent_speakers: 3 # max number of speakers talking simultaneously (set to null to disable)
 save_anechoic: True # save also anechoic
 save_spk: True # save each speaker stream
 
 duration: 120
 manifest_prefix: librispeech
-librispeech_dir: /lustre/fsn1/projects/rech/par/ulf22fh//Librispeech/LibriSpeech
-librispeech_align: /lustre/fsn1/projects/rech/par/ulf22fh/LibriSpeechAlign/LibriSpeech/
+librispeech_dir: /raid/users/popcornell/LibriSpeech
+librispeech_align: /raid/users/popcornell/FastMSS/LibriSpeech/
 dset_splits:
   - train-clean-100
-  - train-clean-360
 split_fa_factor: 0.25
 max_utt_duration: 60
 min_utt_duration: 0.0
@@ -29,7 +28,7 @@ use_markov: True
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
 add_noise: True
-noise_rel_gain: [-24, -3]
+noise_rel_gain: [-24, 6]
 multi_noise_sampling: True # sample multiple noise files and concatenate with cross-fading
 speed_perturb: False # this makes generation reaaally slow.
 speed_perturb_range: [0.95, 1.05]
@@ -39,13 +38,13 @@ use_fir: False
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
 noise_folders:
-  - /lustre/fsn1/projects/rech/par/ulf22fh/BFND/BFSD/
+  - /raid/users/popcornell/FastMSS/high_res_wham_16kHz
 
-noise_filename_pattern: 'example\d+\.wav' # regex pattern to filter noise files by name (e.g., "example.*\.wav" or "^noise_.*")
+noise_filename_pattern: null # regex pattern to filter noise files by name (e.g., "example.*\.wav" or "^noise_.*")
 filter_noise_len: 2.0 # remove shorter than 20 seconds
 
 reverberate: True
-n_rirs: 5000
+n_rirs: 1000
 n_pos_rirs: 50
 rt60: [0.1, 0.7]
 room_sz: [5, 10]
