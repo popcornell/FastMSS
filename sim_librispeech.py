@@ -2,6 +2,7 @@ import glob
 import json
 import logging
 import os
+import re
 from functools import partial
 from pathlib import Path
 
@@ -92,6 +93,17 @@ def main(cfg: DictConfig) -> None:
                         os.path.join(c_folder, "**/*" + c_ext), recursive=True
                     )
                     noise_files.extend(tmp)
+
+            # Apply regex filter if specified
+            if hasattr(cfg, 'noise_filename_pattern') and cfg.noise_filename_pattern is not None:
+                pattern = re.compile(cfg.noise_filename_pattern)
+                original_count = len(noise_files)
+                noise_files = [f for f in noise_files if pattern.search(os.path.basename(f))]
+                filtered_count = original_count - len(noise_files)
+                logger.info(
+                    f"Applied filename pattern '{cfg.noise_filename_pattern}': "
+                    f"kept {len(noise_files)} files, filtered out {filtered_count} files."
+                )
 
             worker = partial(discard, duration=cfg.filter_noise_len)
             # filter noise that are too short

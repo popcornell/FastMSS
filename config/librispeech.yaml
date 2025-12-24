@@ -2,33 +2,35 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-output_dir: /lustre/fsn1/projects/rech/par/ulf22fh//librispeech-synth-noisy
+output_dir: /lustre/fsn1/projects/rech/par/ulf22fh//librispeech-synth-noisy-manyspeakers-large-v3
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
 
-n_meetings: 5
+n_meetings: 15000
 min_max_spk: [2, 5] # min max speakers.
+max_concurrent_speakers: 3 # max number of speakers talking simultaneously (set to null to disable)
 save_anechoic: True # save also anechoic
 save_spk: True # save each speaker stream
 
-duration: 600
+duration: 120
 manifest_prefix: librispeech
-librispeech_dir: /lustre/fsn1/projects/rech/par/ulf22fh//LibriSpeech
-librispeech_align: /lustre/fsn1/projects/rech/par/ulf22fh/LibriSpeechAlign/LibriSpeech
+librispeech_dir: /lustre/fsn1/projects/rech/par/ulf22fh//Librispeech/LibriSpeech
+librispeech_align: /lustre/fsn1/projects/rech/par/ulf22fh/LibriSpeechAlign/LibriSpeech/
 dset_splits:
   - train-clean-100
   - train-clean-360
-split_fa_factor: 0.2
+split_fa_factor: 0.25
 max_utt_duration: 60
-min_utt_duration: 0.3
+min_utt_duration: 0.0
 min_spk_utt: 5
 use_markov: True
 
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
 add_noise: True
-noise_rel_gain: [-24, 8]
+noise_rel_gain: [-24, -3]
+multi_noise_sampling: True # sample multiple noise files and concatenate with cross-fading
 speed_perturb: False # this makes generation reaaally slow.
 speed_perturb_range: [0.95, 1.05]
 use_fir: False
@@ -37,12 +39,13 @@ use_fir: False
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
 noise_folders:
-  - /lustre/fswork/projects/rech/par/ulf22fh/FastMSS/wham_noise_16kHz/
+  - /lustre/fsn1/projects/rech/par/ulf22fh/BFND/BFSD/
 
-filter_noise_len: 20 # remove shorter than 20 seconds
+noise_filename_pattern: 'example\d+\.wav' # regex pattern to filter noise files by name (e.g., "example.*\.wav" or "^noise_.*")
+filter_noise_len: 2.0 # remove shorter than 20 seconds
 
 reverberate: True
-n_rirs: 10
+n_rirs: 5000
 n_pos_rirs: 50
 rt60: [0.1, 0.7]
 room_sz: [5, 10]

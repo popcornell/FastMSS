@@ -16,6 +16,75 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def concatenate_audio_with_crossfade(audio_segments, crossfade_samples=1024):
+    """
+    Concatenate multiple audio segments with crossfading at boundaries.
+
+    Parameters:
+    -----------
+    audio_segments : list of np.ndarray
+        List of 1D numpy arrays representing audio signals to concatenate
+    crossfade_samples : int, optional
+        Number of samples for crossfade transition (default: 1024)
+
+    Returns:
+    --------
+    np.ndarray
+        Concatenated audio with crossfaded boundaries
+    """
+    if len(audio_segments) == 0:
+        return np.array([])
+
+    if len(audio_segments) == 1:
+        return audio_segments[0]
+
+    # Allocate more space than needed to handle variable crossfade lengths
+    # We'll trim to actual size at the end
+    max_length = sum(len(seg) for seg in audio_segments)
+    output = np.zeros(max_length, dtype=audio_segments[0].dtype)
+    current_pos = 0
+
+    # Process first segment (no fade in)
+    first_seg = audio_segments[0]
+    output[:len(first_seg)] = first_seg
+    current_pos = len(first_seg)
+
+    # Create crossfade windows (cosine fade)
+    fade_in = 0.5 * (
+        1 - np.cos(np.pi * np.arange(crossfade_samples) / crossfade_samples)
+    )
+    fade_out = 0.5 * (
+        1 + np.cos(np.pi * np.arange(crossfade_samples) / crossfade_samples)
+    )
+
+    # Process remaining segments with crossfading
+    for seg in audio_segments[1:]:
+        # Ensure crossfade doesn't exceed segment length
+        actual_crossfade = min(crossfade_samples, len(seg) // 4, current_pos)
+
+        if actual_crossfade > 0:
+            # Calculate crossfade region
+            crossfade_start = current_pos - actual_crossfade
+
+            # Fade out the previous segment
+            output[crossfade_start:current_pos] *= fade_out[:actual_crossfade]
+
+            # Fade in the new segment and add
+            output[crossfade_start:current_pos] += seg[:actual_crossfade] * fade_in[:actual_crossfade]
+
+            # Add the rest of the new segment
+            remaining_seg = seg[actual_crossfade:]
+            output[current_pos:current_pos + len(remaining_seg)] = remaining_seg
+            current_pos += len(remaining_seg)
+        else:
+            # No crossfade possible
+            output[current_pos:current_pos + len(seg)] = seg
+            current_pos += len(seg)
+
+    # Trim to actual length used
+    return output[:current_pos]
+
+
 def repeat_audio_with_crossfade(audio, target_length, crossfade_samples=1024):
     """
     Repeat audio to reach target length with crossfading at boundaries.

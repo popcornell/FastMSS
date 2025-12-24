@@ -13,7 +13,7 @@ from scipy.signal import convolve, fftconvolve, firwin
 
 from fastmss.hmm_turn_taking import TransitionParams, TransitionType
 
-from .utils import repeat_audio_with_crossfade
+from .utils import concatenate_audio_with_crossfade, repeat_audio_with_crossfade
 
 # configure logging
 logging.basicConfig(level=logging.INFO)
@@ -155,6 +155,121 @@ class ConversationalMeetingSimulator:
         transition_idx = np.random.choice(len(TransitionType), p=probs)
         return list(TransitionType)[transition_idx]
 
+    def count_concurrent_speakers(self, time_point, utterances, offsets, durations):
+        """
+        Count how many different speakers are active at a given time point.
+
+        Args:
+            time_point: Time point to check (in seconds)
+            utterances: List of MonoCut objects
+            offsets: List of start times for each utterance
+            durations: List of durations for each utterance
+
+        Returns:
+            Number of unique speakers active at time_point
+        """
+        active_speakers = set()
+
+        for utt, offset, duration in zip(utterances, offsets, durations):
+            start = offset
+            end = offset + duration
+
+            # Check if this utterance is active at time_point
+            if start <= time_point < end:
+                speaker = utt.supervisions[0].speaker
+                active_speakers.add(speaker)
+
+        return len(active_speakers)
+
+    def find_valid_offset(self, proposed_offset, new_duration, new_speaker,
+                         utterances, offsets, durations, max_concurrent):
+        """
+        Find the earliest valid offset that doesn't exceed max concurrent speakers.
+
+        Args:
+            proposed_offset: Initially proposed offset from get_offset()
+            new_duration: Duration of the new utterance
+            new_speaker: Speaker ID of the new utterance
+            utterances: List of existing MonoCut objects
+            offsets: List of start times for existing utterances
+            durations: List of durations for existing utterances
+            max_concurrent: Maximum allowed concurrent speakers
+
+        Returns:
+            Adjusted offset that respects the max_concurrent constraint
+        """
+        if max_concurrent is None or max_concurrent <= 0:
+            return proposed_offset
+
+        # Check if proposed offset is valid
+        # We need to check the entire duration of the new utterance
+        proposed_end = proposed_offset + new_duration
+
+        # Sample points throughout the new utterance to check
+        num_checks = max(10, int(new_duration * 10))  # Check at ~10Hz
+        check_points = np.linspace(proposed_offset, proposed_end - 0.01, num_checks)
+
+        max_overlap = 0
+        for t in check_points:
+            concurrent = self.count_concurrent_speakers(t, utterances, offsets, durations)
+            # Add 1 for the new speaker if not already counted
+            if concurrent > 0:  # There are existing utterances
+                # Count if adding this new speaker would exceed
+                active_speakers = set()
+                for utt, offset, duration in zip(utterances, offsets, durations):
+                    if offset <= t < offset + duration:
+                        active_speakers.add(utt.supervisions[0].speaker)
+                if new_speaker not in active_speakers:
+                    concurrent += 1
+            else:
+                concurrent = 1  # Just the new speaker
+
+            max_overlap = max(max_overlap, concurrent)
+
+        # If proposed offset is valid, return it
+        if max_overlap <= max_concurrent:
+            return proposed_offset
+
+        # Otherwise, find the next valid time
+        # Collect all utterance end times after proposed_offset
+        end_times = []
+        for offset, duration in zip(offsets, durations):
+            end_time = offset + duration
+            if end_time > proposed_offset:
+                end_times.append(end_time)
+
+        if not end_times:
+            return proposed_offset
+
+        # Sort end times
+        end_times = sorted(end_times)
+
+        # Try each end time as a potential start point
+        for candidate_offset in end_times:
+            candidate_end = candidate_offset + new_duration
+            check_points = np.linspace(candidate_offset, candidate_end - 0.01, num_checks)
+
+            is_valid = True
+            for t in check_points:
+                concurrent = self.count_concurrent_speakers(t, utterances, offsets, durations)
+                # Check if adding new speaker would exceed limit
+                active_speakers = set()
+                for utt, offset, duration in zip(utterances, offsets, durations):
+                    if offset <= t < offset + duration:
+                        active_speakers.add(utt.supervisions[0].speaker)
+                if new_speaker not in active_speakers:
+                    concurrent += 1
+
+                if concurrent > max_concurrent:
+                    is_valid = False
+                    break
+
+            if is_valid:
+                return candidate_offset
+
+        # If no valid offset found among end times, push to after all current utterances
+        return max(offsets[-1] + durations[-1] if offsets else 0, proposed_offset)
+
     def create_fir_highpass(self, cutoff_freq, num_taps=101, window="hamming"):
         """
         Create a FIR highpass filter using the window method.
@@ -214,43 +329,99 @@ class ConversationalMeetingSimulator:
         return noisy_audio
 
     def add_real_noise(self, audio, min_speech_level_db, range_db_offset=(-15, 3)):
-        # sample real noise clip
-
-        c_noise = np.random.choice(self.noise_files)
-        c_noise = str(c_noise)
-
-        info = sf.SoundFile(c_noise)
-        assert info.samplerate == self.cfg.samplerate
-
-        tgt_len = audio.shape[-1]
-
-        if len(info) > tgt_len:
-            cursor = np.random.randint(0, len(info) - tgt_len)
-        else:
-            cursor = 0
-
-        c_noise, _ = sf.read(c_noise, start=cursor, stop=cursor + tgt_len)
+        # Check if multi-noise sampling is enabled
+        multi_noise_enabled = getattr(self.cfg, 'multi_noise_sampling', True)
 
         if len(audio) == 0:
             return audio
 
-        if c_noise.ndim > 1:
-            if c_noise.shape[-1] > 1:
-                ch = np.random.randint(0, c_noise.shape[-1])
-                c_noise = c_noise[:, ch]
+        tgt_len = audio.shape[-1]
 
-        if c_noise.shape[0] < tgt_len:
-            c_noise = repeat_audio_with_crossfade(c_noise, tgt_len, 16000)
+        if multi_noise_enabled:
+            # Sample multiple noise files to cover the entire meeting duration
+            # Account for crossfading by sampling a bit more than needed
+            crossfade_samples = int(0.5 * self.cfg.samplerate)  # 0.5 second crossfade
+            noise_segments = []
+            total_sampled = 0
+
+            # Keep sampling until we have enough (accounting for crossfading loss)
+            while total_sampled < tgt_len:
+                # Sample a noise file
+                c_noise_file = str(np.random.choice(self.noise_files))
+                info = sf.SoundFile(c_noise_file)
+                assert info.samplerate == self.cfg.samplerate
+
+                # Determine how much to read from this file
+                available_length = len(info)
+
+                # On first iteration, read more; on subsequent, read chunks
+                if len(noise_segments) == 0:
+                    # First segment - read a good chunk
+                    read_length = min(available_length, tgt_len)
+                else:
+                    # Subsequent segments - read chunks, accounting for crossfade loss
+                    remaining_needed = tgt_len - total_sampled + (len(noise_segments) * crossfade_samples)
+                    read_length = min(available_length, max(remaining_needed, crossfade_samples * 2))
+
+                if available_length > read_length:
+                    # Read a random segment from this file
+                    cursor = np.random.randint(0, available_length - read_length)
+                    c_noise, _ = sf.read(c_noise_file, start=cursor, stop=cursor + read_length)
+                else:
+                    # Read the entire file
+                    c_noise, _ = sf.read(c_noise_file)
+
+                # Handle multi-channel noise by selecting a random channel
+                if c_noise.ndim > 1:
+                    if c_noise.shape[-1] > 1:
+                        ch = np.random.randint(0, c_noise.shape[-1])
+                        c_noise = c_noise[:, ch]
+
+                # Normalize each segment before concatenation (unit variance)
+                c_noise = c_noise / (np.std(c_noise) + 1e-8)
+
+                noise_segments.append(c_noise)
+                total_sampled += len(c_noise)
+
+            # Concatenate all noise segments with crossfading
+            c_noise = concatenate_audio_with_crossfade(noise_segments, crossfade_samples)
+
+            # Ensure we have exactly the target length
+            if len(c_noise) < tgt_len:
+                # Should rarely happen now, but pad if needed
+                c_noise = np.pad(c_noise, (0, tgt_len - len(c_noise)), mode='constant')
+            elif len(c_noise) > tgt_len:
+                # Trim to exact length
+                c_noise = c_noise[:tgt_len]
+        else:
+            # Original single-noise behavior
+            c_noise_file = str(np.random.choice(self.noise_files))
+            info = sf.SoundFile(c_noise_file)
+            assert info.samplerate == self.cfg.samplerate
+
+            if len(info) > tgt_len:
+                cursor = np.random.randint(0, len(info) - tgt_len)
+            else:
+                cursor = 0
+
+            c_noise, _ = sf.read(c_noise_file, start=cursor, stop=cursor + tgt_len)
+
+            if c_noise.ndim > 1:
+                if c_noise.shape[-1] > 1:
+                    ch = np.random.randint(0, c_noise.shape[-1])
+                    c_noise = c_noise[:, ch]
+
+            if c_noise.shape[0] < tgt_len:
+                c_noise = repeat_audio_with_crossfade(c_noise, tgt_len, 16000)
+
+            # Normalize before applying gain
+            c_noise = c_noise / (np.std(c_noise) + 1e-8)
 
         # Calculate maximum allowed noise level (5 dB below min speech level)
         max_noise_level_db = min_speech_level_db + np.random.uniform(*range_db_offset)
 
-        # Generate random noise level between 0 and max allowed
-        # Using a range that gives reasonable noise levels
-        # noise_level_db = np.random.uniform(max_noise_level_db - 20, max_noise_level_db)
+        # Apply target noise level (gain)
         noise_rms = 10 ** (max_noise_level_db / 20.0)
-
-        c_noise = c_noise / (np.std(c_noise) + 1e-8)
         c_noise = c_noise * noise_rms
 
         # Add noise to signal
@@ -360,6 +531,18 @@ class ConversationalMeetingSimulator:
                     c_offset = self.get_offset(
                         prev_cut, prev_offset, prev_offset_spk[c_spk], transition_type
                     )
+
+                # Apply max concurrent speakers constraint if configured
+                max_concurrent = getattr(self.cfg, 'max_concurrent_speakers', None)
+                if max_concurrent is not None and max_concurrent > 0:
+                    # Build durations list for existing utterances
+                    durations = [u.duration for u in utterances]
+                    # Find valid offset respecting the constraint
+                    c_offset = self.find_valid_offset(
+                        c_offset, cut.duration, c_spk,
+                        utterances, offsets, durations, max_concurrent
+                    )
+
                 offsets.append(c_offset)
                 utterances.append(cut)
 
