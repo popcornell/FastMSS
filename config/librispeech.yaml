@@ -47,7 +47,7 @@ filter_noise_len: 2.0 # remove shorter than 20 seconds
 reverberate: True
 n_rirs: 5000
 n_pos_rirs: 50
-rt60: [0.1, 0.7]
+rt60: [0.49, 0.5]
 room_sz: [5, 10]
 room_ceiling: [3, 5]
 delta_dist: 0.5  # min distance between walls and among speakers
