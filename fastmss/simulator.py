@@ -611,6 +611,16 @@ class ConversationalMeetingSimulator:
                 )
                 c_rir_anechoic, fs = sf.read(c_rir_anechoic)
                 assert fs == self.cfg.samplerate
+
+                # Find direct sound (peak) and trim RIRs to start there
+                # This removes pre-delay and maintains time alignment
+                direct_idx = np.argmax(np.abs(c_rir))
+                c_rir = c_rir[direct_idx:]
+
+                direct_idx_anechoic = np.argmax(np.abs(c_rir_anechoic))
+                c_rir_anechoic = c_rir_anechoic[direct_idx_anechoic:]
+
+                # Now convolve with mode="full" to preserve reverb tail
                 c_audio_anechoic = convolve(
                     c_audio, c_rir_anechoic[None, :], mode="full"
                 )
@@ -619,21 +629,15 @@ class ConversationalMeetingSimulator:
                     c_rir = c_rir[:, np.newaxis]
                 c_audio = convolve(c_audio, c_rir.T, mode="full")
 
-                if c_audio.shape[0] > output_audio.shape[0]:
-                    output_audio = np.pad(
-                    output_audio,
-                    ((0,  c_audio.shape[0] -1), (0, 0)),
-                    mode="constant")
-
-                c_audio_anechoic = np.pad(
-                    c_audio_anechoic,
-                    ((0, 0), (0, c_audio.shape[-1] - c_audio_anechoic.shape[-1])),
-                    mode="constant",
-                )
-
-                if c_audio_anechoic.shape[-1] > c_audio.shape[-1]:
-                    import pdb
-                    pdb.set_trace()
+                # Ensure anechoic matches reverberant length
+                if c_audio_anechoic.shape[-1] < c_audio.shape[-1]:
+                    c_audio_anechoic = np.pad(
+                        c_audio_anechoic,
+                        ((0, 0), (0, c_audio.shape[-1] - c_audio_anechoic.shape[-1])),
+                        mode="constant",
+                    )
+                elif c_audio_anechoic.shape[-1] > c_audio.shape[-1]:
+                    c_audio_anechoic = c_audio_anechoic[:, :c_audio.shape[-1]]
 
             else:
                 assert self.cfg.save_anechoic == False
