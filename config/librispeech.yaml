@@ -1,30 +1,31 @@
 n_jobs: 8
-stage: 0
+stage: 4
 samplerate: 16000
 
-output_dir: /lustre/fsn1/projects/rech/par/ulf22fh//librispeech-synth-noisy-manyspeakers-large-v3
+output_dir: /mnt/proj1/fta-26-11/ipoloka/FastMSS/libri_sim_noisy
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
 
-n_meetings: 15000
+n_meetings: 1000
 min_max_spk: [2, 5] # min max speakers.
-max_concurrent_speakers: 3 # max number of speakers talking simultaneously (set to null to disable)
-save_anechoic: True # save also anechoic
-save_spk: True # save each speaker stream
+max_concurrent_speakers: 4 # max number of speakers talking simultaneously (set to null to disable)
+save_anechoic: False # save also anechoic
+save_spk: False # save each speaker stream
 
-duration: 120
+duration: 180
 manifest_prefix: librispeech
-librispeech_dir: /lustre/fsn1/projects/rech/par/ulf22fh//Librispeech/LibriSpeech
-librispeech_align: /lustre/fsn1/projects/rech/par/ulf22fh/LibriSpeechAlign/LibriSpeech/
+librispeech_dir: /mnt/proj1/open-33-6/data/mt-asr-data-prep/data/librispeech_cp/LibriSpeech
+librispeech_align: /mnt/proj1/open-33-6/data/mt-asr-data-prep/data/librispeech_cp/LibriSpeech
 dset_splits:
   - train-clean-100
   - train-clean-360
+  - train-other-500
 split_fa_factor: 0.25
-max_utt_duration: 60
+max_utt_duration: 20
 min_utt_duration: 0.0
 min_spk_utt: 5
-use_markov: True
+use_markov: False
 
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
@@ -39,9 +40,9 @@ use_fir: False
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
 noise_folders:
-  - /lustre/fsn1/projects/rech/par/ulf22fh/BFND/BFSD/
+  - /mnt/proj1/open-33-6/data/mt-asr-data-prep/data/wham_noise/wham_noise
 
-noise_filename_pattern: 'example\d+\.wav' # regex pattern to filter noise files by name (e.g., "example.*\.wav" or "^noise_.*")
+noise_filename_pattern: null # regex pattern to filter noise files by name (e.g., "example.*\.wav" or "^noise_.*")
 filter_noise_len: 2.0 # remove shorter than 20 seconds
 
 reverberate: True
@@ -67,3 +68,4 @@ mic_type: single
 # doa too would be cool.
 
 # add support to fit real meetings HMM stats from supervisions.
+target_conv_supervisions: "/mnt/proj1/open-33-6/data/mt-asr-data-prep/manifests/notsofar1/notsofar1-sdm_supervisions_train_sc.jsonl.gz"

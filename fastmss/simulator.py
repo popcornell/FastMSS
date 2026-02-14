@@ -2,16 +2,16 @@ import logging
 import os
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Optional
 
+import lhotse
 import numpy as np
 import soundfile as sf
-from lhotse import AudioSource, MonoCut, Recording, RecordingSet, SupervisionSet
-from lhotse.supervision import AlignmentItem, SupervisionSegment
-from lhotse.utils import add_durations, uuid4
-from scipy.signal import convolve, fftconvolve, firwin
-
 from fastmss.hmm_turn_taking import TransitionParams, TransitionType
+from lhotse import AudioSource, Recording
+from lhotse.supervision import AlignmentItem, SupervisionSegment
+from lhotse.utils import uuid4
+from scipy.signal import convolve, firwin
 
 from .utils import concatenate_audio_with_crossfade, repeat_audio_with_crossfade
 
@@ -52,6 +52,8 @@ class ConversationalMeetingSimulator:
         self.noise_files = noise_files  # optional background noise.
         # if not available, gaussian is used.
         self.hmm_params = hmm_params if hmm_params is not None else TransitionParams()
+        if cfg.target_conv_supervisions:
+            self.hmm_params.fit(lhotse.load_manifest(cfg.target_conv_supervisions))
 
         # map speakers to cuts
         logger.info("Filtering source Cuts: removing too short or too long.")
