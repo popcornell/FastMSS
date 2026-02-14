@@ -55,3 +55,5 @@ You can then simulate a meeting scenario with:
 python sim_librispeech.py stage=0 librispeech_dir=<YOUR_LIBRISPEECH_DIR> librispeech_align=<YOUR_ALIGN_DIR>/LibriSpeech_MFA/LibriSpeech
 ```
 
+Warning output cutset may contain cuts longer than provided duration.
+If training on max length chunks following script can be used to presegment  https://github.com/BUTSpeechFIT/mt-asr-data-prep/blob/main/src/pre_segment_using_alignments.py
