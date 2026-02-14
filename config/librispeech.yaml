@@ -1,5 +1,5 @@
 n_jobs: 8
-stage: 4
+stage: 0
 samplerate: 16000
 
 output_dir: /mnt/proj1/fta-26-11/ipoloka/FastMSS/libri_sim_noisy
@@ -43,7 +43,7 @@ noise_folders:
   - /mnt/proj1/open-33-6/data/mt-asr-data-prep/data/wham_noise/wham_noise
 
 noise_filename_pattern: null # regex pattern to filter noise files by name (e.g., "example.*\.wav" or "^noise_.*")
-filter_noise_len: 2.0 # remove shorter than 20 seconds
+filter_noise_len: 20.0 # remove shorter than 20 seconds
 
 reverberate: True
 n_rirs: 5000
@@ -67,5 +67,4 @@ mic_type: single
 # add support also for hrtf ? it would be cool !
 # doa too would be cool.
 
-# add support to fit real meetings HMM stats from supervisions.
-target_conv_supervisions: "/mnt/proj1/open-33-6/data/mt-asr-data-prep/manifests/notsofar1/notsofar1-sdm_supervisions_train_sc.jsonl.gz"
+target_conv_supervisions: "/mnt/proj1/open-33-6/data/mt-asr-data-prep/manifests/notsofar1/notsofar1_sdm_train_set_240825.1_train_supervisions_30s.jsonl.gz"
