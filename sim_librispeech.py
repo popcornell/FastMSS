@@ -177,7 +177,31 @@ def main(cfg: DictConfig) -> None:
             # load rirs JSON
             out_file = os.path.join(cfg.output_dir, "manifests", "all_rooms.json")
             with open(out_file, "r") as f:
-                rirs = json.load(f)
+                rirs_files = json.load(f)
+
+            # Load position metadata for each room
+            rirs = []
+            for room_rirs in rirs_files:
+                # Get room directory from first RIR file
+                room_dir = Path(room_rirs[0]).parent
+                room_id = Path(room_rirs[0]).stem.rsplit('_', 1)[0]  # Extract room_id from filename
+
+                # Load position metadata
+                metadata_file = room_dir / f"{room_id}_positions.json"
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+
+                # Create mapping from RIR file to position
+                rir_to_pos = {item['rir_file']: item['position'] for item in metadata['positions']}
+
+                # Build room RIRs with positions
+                room_rirs_with_pos = []
+                for rir_file in room_rirs:
+                    room_rirs_with_pos.append({
+                        'file': rir_file,
+                        'pos': rir_to_pos[rir_file]
+                    })
+                rirs.append(room_rirs_with_pos)
         else:
             rirs = None
 

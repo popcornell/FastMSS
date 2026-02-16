@@ -2,7 +2,7 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-output_dir: /lustre/fsn1/projects/rech/par/ulf22fh/ami-synth-ihm-train
+output_dir: /Users/samco/Datasets/synth-AMI
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
@@ -14,7 +14,7 @@ save_spk: False # save each speaker stream
 
 duration: 60
 manifest_prefix: ami-ihm
-manifest_dir: /lustre/fswork/projects/rech/par/ulf22fh/AMI
+manifest_dir: /Users/samco/Datasets/AMI
 dset_splits:
   - train
 split_fa_factor: 0.2
@@ -29,15 +29,20 @@ add_noise: True
 noise_rel_gain: [-24, 8]
 speed_perturb: False # this makes generation reaaally slow.
 speed_perturb_range: [0.95, 1.05]
-use_fir: False
+use_fir: True
 
 # these will be parsed and sampled randomly.
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
+#noise_folders:
+  #- /lustre/fswork/projects/rech/par/ulf22fh/FastMSS/wham_noise_16kHz/
 noise_folders:
-  - /lustre/fswork/projects/rech/par/ulf22fh/FastMSS/wham_noise_16kHz/
+  - /Users/samco/Datasets/BFND/
 
-filter_noise_len: 20 # remove shorter than 20 seconds
+noise_filename_pattern: 'example\d+\.wav' # regex pattern to filter noise files by name (e.g., "example.*\.wav" or "^noise_.*")
+filter_noise_len: 2.0 # remove shorter than 20 seconds
+
+#filter_noise_len: 20 # remove shorter than 20 seconds
 
 reverberate: True
 n_rirs: 2000
@@ -48,6 +53,7 @@ room_ceiling: [3, 5]
 delta_dist: 0.5  # min distance between walls and among speakers
 use_rand_ism: False
 rand_disp: 0.0 # if save anechoic this should be 0.0 probably
+max_position_change: 0.5  # meters - max distance speaker can move per utterance
 
 save_cutset: True
 drop_without_align: True

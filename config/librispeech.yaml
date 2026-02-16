@@ -53,6 +53,7 @@ room_ceiling: [3, 5]
 delta_dist: 0.5  # min distance between walls and among speakers
 use_rand_ism: False
 rand_disp: 0.0 # if save anechoic this should be 0.0 probably
+max_position_change: 0.5  # meters - max distance speaker can move per utterance
 
 save_cutset: True
 drop_without_align: True
