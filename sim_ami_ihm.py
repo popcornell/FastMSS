@@ -2,6 +2,7 @@ import glob
 import json
 import logging
 import os
+import re
 from functools import partial
 from pathlib import Path
 
@@ -73,6 +74,17 @@ def main(cfg: DictConfig) -> None:
                     )
                     noise_files.extend(tmp)
 
+            # Apply regex filter if specified
+            if hasattr(cfg, 'noise_filename_pattern') and cfg.noise_filename_pattern is not None:
+                pattern = re.compile(cfg.noise_filename_pattern)
+                original_count = len(noise_files)
+                noise_files = [f for f in noise_files if pattern.search(os.path.basename(f))]
+                filtered_count = original_count - len(noise_files)
+                logger.info(
+                    f"Applied filename pattern '{cfg.noise_filename_pattern}': "
+                    f"kept {len(noise_files)} files, filtered out {filtered_count} files."
+                )
+
             worker = partial(discard, duration=cfg.filter_noise_len)
             # filter noise that are too short
             filtered = []
@@ -97,6 +109,8 @@ def main(cfg: DictConfig) -> None:
             # e.g. WHAM or SINS
             logger.info(f"Noise files paths saved in {out_file}")
             # TODO impulsive noises ?
+        else:
+            noise_files = None
 
     if cfg.stage <= 3:
         logger.info("Simulating RIRs using Pyroomacoustics")
@@ -142,7 +156,31 @@ def main(cfg: DictConfig) -> None:
             # load rirs JSON
             out_file = os.path.join(cfg.output_dir, "manifests", "all_rooms.json")
             with open(out_file, "r") as f:
-                rirs = json.load(f)
+                rirs_files = json.load(f)
+
+            # Load position metadata for each room
+            rirs = []
+            for room_rirs in rirs_files:
+                # Get room directory from first RIR file
+                room_dir = Path(room_rirs[0]).parent
+                room_id = Path(room_rirs[0]).stem.rsplit('_', 1)[0]  # Extract room_id from filename
+
+                # Load position metadata
+                metadata_file = room_dir / f"{room_id}_positions.json"
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+
+                # Create mapping from RIR file to position
+                rir_to_pos = {item['rir_file']: item['position'] for item in metadata['positions']}
+
+                # Build room RIRs with positions
+                room_rirs_with_pos = []
+                for rir_file in room_rirs:
+                    room_rirs_with_pos.append({
+                        'file': rir_file,
+                        'pos': rir_to_pos[rir_file]
+                    })
+                rirs.append(room_rirs_with_pos)
         else:
             rirs = None
 
