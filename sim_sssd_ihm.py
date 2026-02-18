@@ -13,7 +13,7 @@ from lhotse.manipulation import combine as combine_manifests
 from lhotse.parallel import parallel_map
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
-
+import re
 from fastmss.rirsimulator import RIRSimulator
 from fastmss.simulator import ConversationalMeetingSimulator
 
@@ -39,23 +39,22 @@ def main(cfg: DictConfig) -> None:
     if cfg.stage <= 1:
         Path(cfg.output_dir).mkdir(exist_ok=True)
         all_cuts = []
-        for split in cfg.dset_splits:
-            c_rec = lhotse.load_manifest(
+        #for split in cfg.dset_splits:
+        c_rec = lhotse.load_manifest(
                 Path(cfg.manifest_dir)
-                / f"recordings_{split}.jsonl.gz"
+                / f"recordings.jsonl.gz"
             )
-            c_sup = lhotse.load_manifest(
+        c_sup = lhotse.load_manifest(
                 Path(cfg.manifest_dir)
-                / f"supervisions_{split}.jsonl.gz"
-            )
-            c_cut = CutSet.from_manifests(recordings=c_rec, supervisions=c_sup)
-            c_cut = c_cut.trim_to_supervisions(
+                / f"supervisions.jsonl.gz"
+        )
+        c_cut = CutSet.from_manifests(recordings=c_rec, supervisions=c_sup)
+        c_cut = c_cut.trim_to_supervisions(
                 keep_overlapping=False,
                 min_duration=0.0,
                 num_jobs=cfg.n_jobs,
-                keep_all_channels=False,
-            )
-            all_cuts.append(c_cut)
+                keep_all_channels=False).to_eager().filter(lambda cut: cut.duration >= cfg.min_utt_duration and cut.duration <= cfg.max_utt_duration)
+        all_cuts.append(c_cut)
         all_cuts = combine_manifests(all_cuts)
         logger.info("Saving source CutSet to disk")
         (Path(cfg.output_dir) / "manifests").mkdir(exist_ok=True)
@@ -121,8 +120,7 @@ def main(cfg: DictConfig) -> None:
         for c_rirs in tqdm(
             parallel_map(worker, meeting_ids, num_jobs=cfg.n_jobs),
             total=cfg.n_rirs,
-            desc="Simulating room impulse responses (RIRs)",
-        ):
+            desc="Simulating room impulse responses (RIRs)"):
             all_rooms.append(c_rirs)
 
         # JSON file here with a list of lists
@@ -154,7 +152,31 @@ def main(cfg: DictConfig) -> None:
             # load rirs JSON
             out_file = os.path.join(cfg.output_dir, "manifests", "all_rooms.json")
             with open(out_file, "r") as f:
-                rirs = json.load(f)
+                rirs_files = json.load(f)
+
+            # Load position metadata for each room
+            rirs = []
+            for room_rirs in rirs_files:
+                # Get room directory from first RIR file
+                room_dir = Path(room_rirs[0]).parent
+                room_id = Path(room_rirs[0]).stem.rsplit('_', 1)[0]  # Extract room_id from filename
+
+                # Load position metadata
+                metadata_file = room_dir / f"{room_id}_positions.json"
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+
+                # Create mapping from RIR file to position
+                rir_to_pos = {item['rir_file']: item['position'] for item in metadata['positions']}
+
+                # Build room RIRs with positions
+                room_rirs_with_pos = []
+                for rir_file in room_rirs:
+                    room_rirs_with_pos.append({
+                        'file': rir_file,
+                        'pos': rir_to_pos[rir_file]
+                    })
+                rirs.append(room_rirs_with_pos)
         else:
             rirs = None
 
