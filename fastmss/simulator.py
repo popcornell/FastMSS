@@ -28,7 +28,6 @@ class ConversationalMeetingSimulator:
         all_cuts,
         rirs=None,
         noise_files=None,
-        hmm_params=None,
         # config,
         # speed_perturb=False,
         # sample_rate=16000,
@@ -51,9 +50,12 @@ class ConversationalMeetingSimulator:
         self.rirs = rirs
         self.noise_files = noise_files  # optional background noise.
         # if not available, gaussian is used.
-        self.hmm_params = hmm_params if hmm_params is not None else TransitionParams()
-        if cfg.target_conv_supervisions:
-            self.hmm_params.fit(lhotse.load_manifest(cfg.target_conv_supervisions))
+        self.hmm_params =  TransitionParams(**cfg.hmm_params) if hasattr(cfg, "hmm_params") else TransitionParams()
+        if cfg.hmm_fit_transitions_to:
+            self.hmm_params.fit(lhotse.load_manifest(cfg.hmm_fit_transitions_to))
+
+        if cfg.boost_overlap_factor is not None:
+            self.hmm_params.boost_overlap_factor(cfg.boost_overlap_factor)
 
         # map speakers to cuts
         logger.info("Filtering source Cuts: removing too short or too long.")
