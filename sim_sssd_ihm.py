@@ -36,6 +36,12 @@ def discard(x, duration):
 @hydra.main(config_path="config", config_name="sssd")
 def main(cfg: DictConfig) -> None:
 
+    if hasattr(cfg, 'seed') and cfg.seed is not None:
+        import numpy as np
+        import random
+        np.random.seed(cfg.seed)
+        random.seed(cfg.seed)
+
     if cfg.stage <= 1:
         Path(cfg.output_dir).mkdir(exist_ok=True)
         all_cuts = []

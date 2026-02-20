@@ -37,6 +37,12 @@ def discard(x, duration):
 @hydra.main(config_path="config", config_name="librispeech")
 def main(cfg: DictConfig) -> None:
 
+    if hasattr(cfg, 'seed') and cfg.seed is not None:
+        import numpy as np
+        import random
+        np.random.seed(cfg.seed)
+        random.seed(cfg.seed)
+
     if cfg.stage <= 0:
         lhotse_manifest_dir = os.path.join(cfg.output_dir, "manifests")
         Path(lhotse_manifest_dir).mkdir(parents=True, exist_ok=True)
