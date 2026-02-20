@@ -59,6 +59,6 @@ circular: # match AMI
   n_mics: 8
   center_mic: False
 
-hmm_fit_transitions_to: ${oc.env:MANIFEST_DIR}/ami/ami-ihm_supervisions_train.jsonl.gz
+hmm_fit_transitions_to: ${oc.env:MANIFEST_DIR}/ami/ami-sdm_supervisions_train.jsonl.gz
 
 boost_overlap_factor: null
