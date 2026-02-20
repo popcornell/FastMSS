@@ -2,12 +2,12 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-output_dir: ${oc.env:SIM_OUT_ROOT}/nsf/ami_estimate
+output_dir: ${oc.env:SIM_OUT_ROOT}/nsf/nsf_estimate_markov
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
 
-n_meetings: 7500 # 1 hour - 4*15, 500h - 500 * 4 * 15
+n_meetings: 7500
 min_max_spk: [2, 5] # min max speakers.
 max_concurrent_speakers: 4 # max number of speakers talking simultaneously (set to null to disable)
 save_anechoic: False # save also anechoic
@@ -22,7 +22,7 @@ split_fa_factor: 0.2
 max_utt_duration: 20
 min_utt_duration: 0.0
 min_spk_utt: 5
-use_markov: False
+use_markov: True
 
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
@@ -59,6 +59,5 @@ circular: # match AMI
   n_mics: 8
   center_mic: False
 
-hmm_fit_transitions_to: ${oc.env:MANIFEST_DIR}/ami/ami-ihm_supervisions_train.jsonl.gz
-
+hmm_fit_transitions_to: ${oc.env:MANIFEST_DIR}/notsofar1/notsofar1_ihm_train_set_240825.1_train_supervisions.jsonl.gz
 boost_overlap_factor: null

@@ -55,8 +55,6 @@ class TransitionParams:
         Args:
             factor (float): Multiplier for overlap probabilities (e.g., 1.5 for a 50% boost).
         """
-        import numpy as np  # Ensure numpy is imported in your file
-
         if factor < 0:
             raise ValueError("Boost factor must be a non-negative number.")
 

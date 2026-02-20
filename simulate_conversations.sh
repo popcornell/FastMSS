@@ -3,7 +3,7 @@
 source local_env.sh
 # Table 1
 SIMULATED_OUT="${SIM_OUT_ROOT}/nsf"
-CONFIGS=("flat" "ami_estimate" "nsf_estimate" "nsf_estimate_boosted")
+CONFIGS=("flat" "callhome" "callhome_boosted" "ami_estimate" "nsf_estimate" "nsf_estimate_markov" "nsf_estimate_boosted")
 
 for CONFIG in "${CONFIGS[@]}"; do
     echo "Processing config: $CONFIG"
