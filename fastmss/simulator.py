@@ -755,7 +755,7 @@ class ConversationalMeetingSimulator:
                     # Adjust start and end times by adding the offset
                     adjusted_item = AlignmentItem(
                         symbol=align_item.symbol,
-                        start=align_item.start + offset,
+                        start=align_item.start - cut.start + offset,
                         duration=align_item.duration,
                         score=getattr(align_item, "score", None),
                     )
