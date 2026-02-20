@@ -1,5 +1,6 @@
 n_jobs: 8
 stage: 0
+seed: 777
 samplerate: 16000
 
 output_dir: /lustre/fsn1/projects/rech/par/ulf22fh//librispeech-synth-noisy-manyspeakers-large-v3

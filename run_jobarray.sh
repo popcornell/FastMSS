@@ -1,9 +1,8 @@
 #!/bin/bash
 #
-# SLURM job array wrapper for FastMSS simulation (stage 4 only).
-# Splits n_meetings across N_ARRAY_JOBS independent jobs, each with a unique seed.
-#
-# Prerequisites: stages 0-3 must be completed already (cuts, noise, RIRs prepared).
+# SLURM job array wrapper for FastMSS simulation.
+# Splits n_meetings and n_rirs across N_ARRAY_JOBS independent jobs, each with a unique seed.
+# Each job runs the full pipeline independently.
 #
 # Usage:
 #   ./run_jobarray.sh <sim_script> <n_total_meetings> <n_array_jobs> [extra hydra overrides...]
@@ -57,7 +56,6 @@ set -euo pipefail
 JOB_IDX=\$SLURM_ARRAY_TASK_ID
 MEETINGS_PER_JOB=${MEETINGS_PER_JOB}
 REMAINDER=${REMAINDER}
-N_TOTAL=${N_TOTAL}
 
 # Last job takes the remainder
 if [ "\$JOB_IDX" -eq "${ARRAY_MAX}" ]; then
@@ -66,14 +64,11 @@ else
     N_MEETINGS=\$MEETINGS_PER_JOB
 fi
 
-# Unique seed per job: base seed from SLURM array job ID + task index
+# Unique seed per job
 SEED=\$(( SLURM_ARRAY_JOB_ID + JOB_IDX ))
 
-# Set numpy/python random seed before launching
-export PYTHONHASHSEED=\$SEED
-
 python ${SIM_SCRIPT} \\
-    stage=4 \\
+    stage=0 \\
     n_meetings=\$N_MEETINGS \\
     n_jobs=1 \\
     seed=\$SEED \\

@@ -1,5 +1,6 @@
 n_jobs: 8
 stage: 0
+seed: 777
 samplerate: 16000
 
 output_dir: /Users/samco/Datasets/synth-sssd
