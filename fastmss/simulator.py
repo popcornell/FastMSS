@@ -711,7 +711,8 @@ class ConversationalMeetingSimulator:
         # add some gaussian noise here.
         # if we have noise we can add that too. e.g. wham and sins, qut etc
 
-        if self.cfg.add_noise:
+        noise_prob = getattr(self.cfg, 'noise_probability_global', 1.0)
+        if self.cfg.add_noise and np.random.random() < noise_prob:
             min_lvl = min(speech_lvls)
             if self.noise_files is None:
                 output_audio = self.add_gaussian_noise(output_audio, min_lvl, (-30, 3))

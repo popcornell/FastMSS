@@ -25,6 +25,7 @@ use_markov: True
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
 add_noise: True
+noise_probability_global: 0.8
 noise_rel_gain: [-24, 8]
 speed_perturb: False # this makes generation reaaally slow.
 speed_perturb_range: [0.95, 1.05]

@@ -29,6 +29,7 @@ use_markov: True
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
 add_noise: True
+noise_probability_global: 0.8
 noise_rel_gain: [-24, -3]
 multi_noise_sampling: True # sample multiple noise files and concatenate with cross-fading
 speed_perturb: False # this makes generation reaaally slow.

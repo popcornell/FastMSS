@@ -19,10 +19,10 @@ class TransitionType(Enum):
 class TransitionParams:
     """Parameters for each transition type"""
 
-    beta_th: float = 0.77  # Expected pause duration for turn-hold
-    beta_ts: float = 0.60  # Expected gap duration for turn-switch
-    beta_ir: float = 0.44  # Expected overlap ratio for interruption
-    beta_bc: float = 0.67  # Expected overlap ratio for backchannel # not used now
+    beta_th: float = 0.57  # Expected pause duration for turn-hold
+    beta_ts: float = 0.40  # Expected gap duration for turn-switch
+    beta_ir: float = 0.24  # Expected overlap ratio for interruption
+    beta_bc: float = 0.47  # Expected overlap ratio for backchannel # not used now
 
     # Probability distributions
     p_ind: List[float] = None  # [p_TH, p_TS, p_IR, p_BC] for random selection

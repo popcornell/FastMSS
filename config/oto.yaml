@@ -2,13 +2,13 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-output_dir: /Users/samco/Datasets/synth-oto
+output_dir: /Users/samco/Datasets/synth-oto-clean
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
 
 n_meetings: 15
-min_max_spk: [2, 8] # min max speakers.
+min_max_spk: [2, 2] # min max speakers.
 max_concurrent_speakers: 2 # max number of speakers talking simultaneously (set to null to disable)
 save_anechoic: False # save also anechoic
 save_spk: False # save each speaker stream
@@ -25,6 +25,7 @@ use_markov: True
 base_gain: [-35, -8]
 rel_gain: [-12, +5]
 add_noise: True
+noise_probability_global: 0.5
 noise_rel_gain: [-24, 8]
 speed_perturb: False # this makes generation reaaally slow.
 speed_perturb_range: [0.95, 1.05]
