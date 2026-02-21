@@ -568,7 +568,7 @@ class ConversationalMeetingSimulator:
                 prev_offset_spk[prev_speaker] = prev_offset + cut.duration
             else:
                 prev_offset_spk[prev_speaker] = max(
-                    prev_offset + cut.duration, prev_offset_spk[prev_speaker]
+                    prev_offset + cut.duration + 1e-2, prev_offset_spk[prev_speaker]
                 )
 
             current_time = prev_offset + cut.duration
