@@ -137,7 +137,7 @@ class ConversationalMeetingSimulator:
 
         elif transition_type == TransitionType.BACKCHANNEL:
 
-            overlap_ratio = self.sample_overlap_ratio(self.params.beta_bc)
+            overlap_ratio = self.sample_overlap_ratio(self.hmm_params.beta_bc)
             # start_offset = np.random.uniform(0, prev_duration)
             start_offset = overlap_ratio * prev_duration
 
