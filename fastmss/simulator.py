@@ -82,7 +82,7 @@ class ConversationalMeetingSimulator:
 
         logger.info("Removing speakers with too few utterances.")
         prev_spk = len(spk2cuts.keys())
-        for spk in spk2cuts.keys():
+        for spk in list(spk2cuts.keys()):
             if len(spk2cuts[spk]) < self.cfg.min_spk_utt:
                 del spk2cuts[spk]
         logger.info(f"Before {prev_spk}, now {len(spk2cuts.keys())} speakers.")

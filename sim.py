@@ -2,7 +2,6 @@ import glob
 import json
 import logging
 import os
-import re
 from functools import partial
 from pathlib import Path
 
@@ -12,12 +11,11 @@ import soundfile as sf
 from lhotse import CutSet, RecordingSet, SupervisionSet
 from lhotse.manipulation import combine as combine_manifests
 from lhotse.parallel import parallel_map
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from tqdm import tqdm
 
 from fastmss.rirsimulator import RIRSimulator
 from fastmss.simulator import ConversationalMeetingSimulator
-from fastmss.utils import split_monocuts_batch
 
 # configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def discard(x, duration):
+
     info = sf.SoundFile(x)
     # allow for a little longer since the meetings can be a bit longer when there
     # are many speakers...
@@ -34,56 +33,22 @@ def discard(x, duration):
         return None
 
 
-@hydra.main(config_path="config", config_name="librispeech")
+@hydra.main(version_base=None, config_path="config/table1", config_name="flat")
 def main(cfg: DictConfig) -> None:
 
-    if cfg.stage <= 0:
-        lhotse_manifest_dir = os.path.join(cfg.output_dir, "manifests")
-        Path(lhotse_manifest_dir).mkdir(parents=True, exist_ok=True)
-        from lhotse.recipes.librispeech import prepare_librispeech
-
-        prepare_librispeech(
-            corpus_dir=cfg.librispeech_dir,
-            alignments_dir=cfg.librispeech_align,
-            output_dir=os.path.join(cfg.output_dir, "manifests"),
-            dataset_parts=cfg.dset_splits,
-            num_jobs=cfg.n_jobs,
-        )
-
+    if cfg.stage <= 1:
+        Path(cfg.output_dir).mkdir(exist_ok=True)
         all_cuts = []
         for split in cfg.dset_splits:
-            c_rec = lhotse.load_manifest(os.path.join(cfg.output_dir, "manifests",
-                f"{cfg.manifest_prefix}_recordings_{split}.jsonl.gz"))
-            c_sup = lhotse.load_manifest(
-                os.path.join(cfg.output_dir, "manifests", f"{cfg.manifest_prefix}_supervisions_{split}.jsonl.gz"
-            ))
-            c_cut = CutSet.from_manifests(recordings=c_rec, supervisions=c_sup)
+            c_cut = CutSet.from_file(Path(cfg.manifest_dir)
+                / f"{cfg.manifest_prefix}_{split}.jsonl.gz")
             all_cuts.append(c_cut)
         all_cuts = combine_manifests(all_cuts)
         logger.info("Saving source CutSet to disk")
-
-        all_cuts.to_file(
-            os.path.join(cfg.output_dir, "manifests", "all_cuts_orig.jsonl.gz")
-        )
-
-    if cfg.stage <= 1:
-        try:
-            all_cuts
-        except NameError:
-            logger.info("Loading source CutSet from disk")
-            all_cuts = lhotse.load_manifest(
-                os.path.join(cfg.output_dir, "manifests", "all_cuts_orig.jsonl.gz")
-            )
-        logger.info(f"Before splitting with forced alignment: {len(all_cuts)} cuts.")
-        all_cuts = split_monocuts_batch(
-            all_cuts, cfg.split_fa_factor, num_jobs=cfg.n_jobs)
-        logger.info(f"After splitting with forced alignment: {len(all_cuts)} cuts.")
-        logger.info(f"Saving to disk splitted cuts.")
-        if len(all_cuts) == 0:
-            raise RuntimeError("No cuts left, did you specify the correct path for the forced alignment ?. Exiting.")
+        (Path(cfg.output_dir) / "manifests").mkdir(exist_ok=True)
         all_cuts.to_file(os.path.join(cfg.output_dir, "manifests", "all_cuts.jsonl.gz"))
 
-    if cfg.stage <= 2:
+    if cfg.stage <= 2 and cfg.add_noise:
         if cfg.noise_folders is not None:
             logger.info("Parsing background noise files.")
             noise_files = []
@@ -93,17 +58,6 @@ def main(cfg: DictConfig) -> None:
                         os.path.join(c_folder, "**/*" + c_ext), recursive=True
                     )
                     noise_files.extend(tmp)
-
-            # Apply regex filter if specified
-            if hasattr(cfg, 'noise_filename_pattern') and cfg.noise_filename_pattern is not None:
-                pattern = re.compile(cfg.noise_filename_pattern)
-                original_count = len(noise_files)
-                noise_files = [f for f in noise_files if pattern.search(os.path.basename(f))]
-                filtered_count = original_count - len(noise_files)
-                logger.info(
-                    f"Applied filename pattern '{cfg.noise_filename_pattern}': "
-                    f"kept {len(noise_files)} files, filtered out {filtered_count} files."
-                )
 
             worker = partial(discard, duration=cfg.filter_noise_len)
             # filter noise that are too short
@@ -129,14 +83,11 @@ def main(cfg: DictConfig) -> None:
             # e.g. WHAM or SINS
             logger.info(f"Noise files paths saved in {out_file}")
             # TODO impulsive noises ?
-        else:
-            noise_files = None
 
-    if cfg.stage <= 3:
+    if cfg.stage <= 3 and cfg.reverberate:
         logger.info("Simulating RIRs using Pyroomacoustics")
 
         simulator = RIRSimulator(cfg)
-
         worker = partial(simulator.gen_rirs)
 
         meeting_ids = iter([f"room_{x}" for x in range(cfg.n_rirs)])
@@ -194,9 +145,7 @@ def main(cfg: DictConfig) -> None:
 
         uuids = iter([f"simulation_{x}" for x in range(cfg.n_meetings)])
         work = partial(simulator.gen_audio)
-        # for i in range(10):
-        #    simulator.gen_audio(i)
-        # raise BufferError
+
         recordings = []
         supervisions = []
         for c_rec, c_sup in tqdm(
@@ -212,7 +161,7 @@ def main(cfg: DictConfig) -> None:
         lhotse.validate_recordings_and_supervisions(
             recordings=recordings, supervisions=supervisions
         )
-        logger.info("Saving simulated manifests to disk")
+        logger.info(f"Saving simulated manifests to {output_dir}.")
         supervisions.to_file(
             output_dir / f"synth-{cfg.manifest_prefix}-train-supervisions.jsonl.gz"
         )

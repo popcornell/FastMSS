@@ -2,7 +2,7 @@ n_jobs: 8
 stage: 0
 samplerate: 16000
 
-output_dir: ${oc.env:SIM_OUT_ROOT}/nsf/nsf_estimate
+output_dir: ${oc.env:SIM_OUT_ROOT}/librispeech/callhome_boosted
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
@@ -14,10 +14,12 @@ save_anechoic: False # save also anechoic
 save_spk: False # save each speaker stream
 
 duration: 240
-manifest_prefix: notsofar1_ihm
-manifest_dir: ${oc.env:MANIFEST_DIR}/notsofar1
+manifest_prefix: librispeech
+manifest_dir: ${oc.env:MANIFEST_DIR}/librispeech
 dset_splits:
-  - train_set_240825.1_train_cutset_per_seg
+  - cutset_train-clean-100
+  - cutset_train-clean-360
+  - cutset_train-other-500
 split_fa_factor: 0.2
 max_utt_duration: 20
 min_utt_duration: 0.0
@@ -59,5 +61,5 @@ circular: # match AMI
   n_mics: 8
   center_mic: False
 
-hmm_fit_transitions_to: ${oc.env:MANIFEST_DIR}/notsofar1/notsofar1_sdm_train_set_240825.1_train_supervisions.jsonl.gz
-boost_overlap_factor: null
+hmm_fit_transitions_to: null
+boost_overlap_factor: 2.0

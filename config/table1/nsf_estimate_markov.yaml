@@ -17,7 +17,7 @@ duration: 240
 manifest_prefix: notsofar1_ihm
 manifest_dir: ${oc.env:MANIFEST_DIR}/notsofar1
 dset_splits:
-  - train_set_240825.1_train
+  - train_set_240825.1_train_cutset_per_seg
 split_fa_factor: 0.2
 max_utt_duration: 20
 min_utt_duration: 0.0
