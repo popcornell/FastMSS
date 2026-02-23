@@ -69,6 +69,8 @@ class ConversationalMeetingSimulator:
                 or cut.duration < self.cfg.min_utt_duration
             ):
                 continue
+            if not (hasattr(cut.supervisions[0], "alignment") and cut.supervisions[0].alignment and "word" in cut.supervisions[0].alignment and len(cut.supervisions[0].alignment["word"]) > 0):
+                continue
             c_spk = cut.supervisions[0].speaker
             assert (
                 len(set([x.speaker for x in cut.supervisions])) == 1
