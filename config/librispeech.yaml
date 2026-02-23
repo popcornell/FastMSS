@@ -3,7 +3,7 @@ stage: 0
 seed: 777
 samplerate: 16000
 
-output_dir: /lustre/fsn1/projects/rech/par/ulf22fh//librispeech-synth-noisy-manyspeakers-large-v3
+output_dir: /Users/samco/Datasets/librispeech-synth-noisy
 hydra: # overrides standard hydra output dir
   run:
     dir: ${output_dir}
@@ -16,8 +16,8 @@ save_spk: True # save each speaker stream
 
 duration: 120
 manifest_prefix: librispeech
-librispeech_dir: /lustre/fsn1/projects/rech/par/ulf22fh//Librispeech/LibriSpeech
-librispeech_align: /lustre/fsn1/projects/rech/par/ulf22fh/LibriSpeechAlign/LibriSpeech/
+librispeech_dir: /Users/samco/Datasets/Librispeech/LibriSpeech
+librispeech_align: /Users/samco/Datasets/LibriSpeechAlign/LibriSpeech/
 dset_splits:
   - train-clean-100
   - train-clean-360
@@ -41,7 +41,7 @@ use_fir: False
 # probably good to sample based on length of each file.
 # noise_sample_weighted: True
 noise_folders:
-  - /lustre/fsn1/projects/rech/par/ulf22fh/BFND/BFSD/
+  - /Users/samco/Datasets/BFND/BFSD/
 
 noise_filename_pattern: 'example\d+\.wav' # regex pattern to filter noise files by name (e.g., "example.*\.wav" or "^noise_.*")
 filter_noise_len: 2.0 # remove shorter than 20 seconds
