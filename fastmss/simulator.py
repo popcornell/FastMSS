@@ -505,6 +505,10 @@ class ConversationalMeetingSimulator:
         if self.rirs is not None:
             c_room_rirs = self.rirs[np.random.randint(0, len(self.rirs))]
 
+        # Initialize speaker position tracking for random walk
+        spk2current_pos = {}  # Track 3D position for each speaker
+        spk2rir_idx = {}      # Track current RIR index for each speaker
+
         while current_time < target_dur or len(seen_speakers) < len(sampled_spk):
 
             transition_type = self.select_transition_type(prev_transition)
@@ -606,7 +610,36 @@ class ConversationalMeetingSimulator:
                 c_audio = convolve(c_audio, fir_highpass[None, :], mode="full")
 
             if self.cfg.reverberate:
-                c_rir_file = str(np.random.choice(c_room_rirs))
+                # Sample RIR position using random walk
+                c_spk = cut.supervisions[0].speaker
+                if c_spk not in spk2current_pos:
+                    # First utterance: random position
+                    rir_idx = np.random.randint(0, len(c_room_rirs))
+                    spk2rir_idx[c_spk] = rir_idx
+                    spk2current_pos[c_spk] = c_room_rirs[rir_idx]['pos']
+                    c_rir_file = str(c_room_rirs[rir_idx]['file'])
+                else:
+                    # Subsequent: find RIRs within max_position_change distance
+                    current_pos = spk2current_pos[c_spk]
+                    candidates = []
+                    for i, rir_info in enumerate(c_room_rirs):
+                        dist = np.linalg.norm(np.array(rir_info['pos']) - np.array(current_pos))
+                        if dist <= self.cfg.max_position_change:
+                            candidates.append((i, dist))
+
+                    if candidates:
+                        # Sample from nearby positions (weighted by inverse distance)
+                        weights = [1.0 / (d + 0.01) for _, d in candidates]
+                        weights = np.array(weights) / sum(weights)
+                        chosen_idx = np.random.choice([i for i, _ in candidates], p=weights)
+                    else:
+                        # No nearby RIRs, pick closest one
+                        chosen_idx = min(range(len(c_room_rirs)),
+                                        key=lambda i: np.linalg.norm(np.array(c_room_rirs[i]['pos']) - np.array(current_pos)))
+
+                    spk2rir_idx[c_spk] = chosen_idx
+                    spk2current_pos[c_spk] = c_room_rirs[chosen_idx]['pos']
+                    c_rir_file = str(c_room_rirs[chosen_idx]['file'])
 
                 c_rir, fs = sf.read(c_rir_file)
                 assert fs == self.cfg.samplerate
@@ -684,7 +717,8 @@ class ConversationalMeetingSimulator:
         # add some gaussian noise here.
         # if we have noise we can add that too. e.g. wham and sins, qut etc
 
-        if self.cfg.add_noise:
+        noise_prob = getattr(self.cfg, 'noise_probability_global', 1.0)
+        if self.cfg.add_noise and np.random.random() < noise_prob:
             min_lvl = min(speech_lvls)
             if self.noise_files is None:
                 output_audio = self.add_gaussian_noise(output_audio, min_lvl, (-30, 3))

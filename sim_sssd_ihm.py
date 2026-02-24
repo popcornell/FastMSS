@@ -2,7 +2,6 @@ import glob
 import json
 import logging
 import os
-import re
 from functools import partial
 from pathlib import Path
 
@@ -12,9 +11,9 @@ import soundfile as sf
 from lhotse import CutSet, RecordingSet, SupervisionSet
 from lhotse.manipulation import combine as combine_manifests
 from lhotse.parallel import parallel_map
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
-
+import re
 from fastmss.rirsimulator import RIRSimulator
 from fastmss.simulator import ConversationalMeetingSimulator
 
@@ -34,7 +33,7 @@ def discard(x, duration):
         return None
 
 
-@hydra.main(version_base=None, config_path="config/table1", config_name="flat")
+@hydra.main(config_path="config", config_name="sssd")
 def main(cfg: DictConfig) -> None:
 
     if hasattr(cfg, 'seed') and cfg.seed is not None:
@@ -46,16 +45,28 @@ def main(cfg: DictConfig) -> None:
     if cfg.stage <= 1:
         Path(cfg.output_dir).mkdir(exist_ok=True)
         all_cuts = []
-        for split in cfg.dset_splits:
-            c_cut = CutSet.from_file(Path(cfg.manifest_dir)
-                / f"{cfg.manifest_prefix}_{split}.jsonl.gz")
-            all_cuts.append(c_cut)
+        #for split in cfg.dset_splits:
+        c_rec = lhotse.load_manifest(
+                Path(cfg.manifest_dir)
+                / f"recordings.jsonl.gz"
+            )
+        c_sup = lhotse.load_manifest(
+                Path(cfg.manifest_dir)
+                / f"supervisions.jsonl.gz"
+        )
+        c_cut = CutSet.from_manifests(recordings=c_rec, supervisions=c_sup)
+        c_cut = c_cut.trim_to_supervisions(
+                keep_overlapping=False,
+                min_duration=0.0,
+                num_jobs=cfg.n_jobs,
+                keep_all_channels=False).to_eager().filter(lambda cut: cut.duration >= cfg.min_utt_duration and cut.duration <= cfg.max_utt_duration)
+        all_cuts.append(c_cut)
         all_cuts = combine_manifests(all_cuts)
         logger.info("Saving source CutSet to disk")
         (Path(cfg.output_dir) / "manifests").mkdir(exist_ok=True)
         all_cuts.to_file(os.path.join(cfg.output_dir, "manifests", "all_cuts.jsonl.gz"))
 
-    if cfg.stage <= 2 and cfg.add_noise:
+    if cfg.stage <= 2:
         if cfg.noise_folders is not None:
             logger.info("Parsing background noise files.")
             noise_files = []
@@ -104,7 +115,7 @@ def main(cfg: DictConfig) -> None:
         else:
             noise_files = None
 
-    if cfg.stage <= 3 and cfg.reverberate:
+    if cfg.stage <= 3:
         logger.info("Simulating RIRs using Pyroomacoustics")
 
         simulator = RIRSimulator(cfg)
@@ -115,8 +126,7 @@ def main(cfg: DictConfig) -> None:
         for c_rirs in tqdm(
             parallel_map(worker, meeting_ids, num_jobs=cfg.n_jobs),
             total=cfg.n_rirs,
-            desc="Simulating room impulse responses (RIRs)",
-        ):
+            desc="Simulating room impulse responses (RIRs)"):
             all_rooms.append(c_rirs)
 
         # JSON file here with a list of lists
@@ -205,7 +215,7 @@ def main(cfg: DictConfig) -> None:
         lhotse.validate_recordings_and_supervisions(
             recordings=recordings, supervisions=supervisions
         )
-        logger.info(f"Saving simulated manifests to {output_dir}.")
+        logger.info("Saving simulated manifests to disk")
         supervisions.to_file(
             output_dir / f"synth-{cfg.manifest_prefix}-train-supervisions.jsonl.gz"
         )

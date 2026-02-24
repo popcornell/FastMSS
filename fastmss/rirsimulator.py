@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import numpy as np
 import pyroomacoustics
@@ -138,8 +139,11 @@ class RIRSimulator:
 
 
 
+        # Store positions for later saving
+        src_positions = []
         for src in range(self.cfg.n_pos_rirs):
             tmp = self.sample_src_pos(l, w, mic_locs)
+            src_positions.append(tmp.tolist())  # Convert to list for JSON serialization
             room.add_source(tmp)
             anechoic.add_source(tmp)
 
@@ -150,6 +154,7 @@ class RIRSimulator:
         #
 
         output_rirs = []
+        position_metadata = []
         for src in range(self.cfg.n_pos_rirs):
             maxlen = max([len(room.rir[x][src]) for x in range(len(room.rir))])
             # pad and then save jointly.
@@ -165,10 +170,21 @@ class RIRSimulator:
             output_rirs.append(flac_path)
             sf.write(flac_path, c_rir, samplerate=self.cfg.samplerate)
 
+            # Store position metadata
+            position_metadata.append({
+                "rir_file": flac_path,
+                "position": src_positions[src]
+            })
+
         for src in range(self.cfg.n_pos_rirs):
             c_rir = anechoic.rir[0][src]
             # for anechoic just use the first channel always !
             flac_path = str(output_dir / Path(meeting_id + f"_{src}-anechoic.flac"))
             sf.write(flac_path, c_rir, samplerate=self.cfg.samplerate)
+
+        # Save position metadata to JSON
+        metadata_path = output_dir / f"{meeting_id}_positions.json"
+        with open(metadata_path, 'w') as f:
+            json.dump({"positions": position_metadata}, f, indent=2)
 
         return output_rirs
