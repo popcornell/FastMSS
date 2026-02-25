@@ -523,7 +523,10 @@ class ConversationalMeetingSimulator:
                 # Different speaker
                 if prev_speaker is not None:
                     available_speakers = [s for s in sampled_spk if s != prev_speaker]
-                    current_speaker = np.random.choice(available_speakers)
+                    if available_speakers:
+                        current_speaker = np.random.choice(available_speakers)
+                    else:
+                        current_speaker = prev_speaker
                 else:
                     current_speaker = np.random.choice(sampled_spk)
 
