@@ -609,7 +609,8 @@ class ConversationalMeetingSimulator:
             if self.cfg.use_fir:
                 c_audio = convolve(c_audio, fir_highpass[None, :], mode="full")
 
-            if self.cfg.reverberate:
+            do_reverb = self.cfg.reverberate and np.random.random() < reverb_prob
+            if do_reverb:
                 # Sample RIR position using random walk
                 c_spk = cut.supervisions[0].speaker
                 if c_spk not in spk2current_pos:
@@ -683,7 +684,7 @@ class ConversationalMeetingSimulator:
             # gain adjust
             c_audio, c_gain = self.normalize_to(c_audio, c_speech_lvl)
 
-            if self.cfg.reverberate:
+            if do_reverb:
                 c_audio_anechoic = c_gain * c_audio_anechoic
 
             offset = int(offset * self.cfg.samplerate)
