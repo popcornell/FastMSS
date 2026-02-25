@@ -609,7 +609,7 @@ class ConversationalMeetingSimulator:
             if self.cfg.use_fir:
                 c_audio = convolve(c_audio, fir_highpass[None, :], mode="full")
 
-            do_reverb = self.cfg.reverberate and np.random.random() < reverb_prob
+            do_reverb = self.cfg.reverberate and np.random.random() < getattr(self.cfg, 'reverb_prob', 1.0)
             if do_reverb:
                 # Sample RIR position using random walk
                 c_spk = cut.supervisions[0].speaker
