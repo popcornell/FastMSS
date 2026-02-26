@@ -49,6 +49,7 @@ class ConversationalMeetingSimulator:
         self.epsilon = 0.03  # For truncated exponential distribution
         self.rirs = rirs
         self.noise_files = noise_files  # optional background noise.
+        self.start_offset = getattr(self.cfg, 'start_offset', 0)
         # if not available, gaussian is used.
         self.hmm_params =  TransitionParams(**cfg.hmm_params) if hasattr(cfg, "hmm_params") else TransitionParams()
         if cfg.hmm_fit_transitions_to:
@@ -62,7 +63,6 @@ class ConversationalMeetingSimulator:
         prev_len = len(all_cuts)
         after_len = 0
         spk2cuts = {}
-        all_cuts = all_cuts.to_eager()
         for cut in all_cuts:
             if (
                 cut.duration > self.cfg.max_utt_duration
@@ -538,7 +538,8 @@ class ConversationalMeetingSimulator:
             c_spk = cut.supervisions[0].speaker
 
             if utt_indx == 0:
-                offsets.append(0.0)
+                initial_offset = np.random.uniform(self.start_offset)
+                offsets.append(initial_offset)
                 utterances.append(cut)
             else:
                 if not c_spk in prev_offset_spk.keys():
@@ -581,7 +582,7 @@ class ConversationalMeetingSimulator:
 
         base_gain = np.random.uniform(*self.cfg.base_gain)
         speech_lvls = []
-        for utt in utterances:
+        for _ in utterances:
             c_gain = np.random.uniform(*self.cfg.rel_gain)
             speech_lvls.append(base_gain + c_gain)
 
