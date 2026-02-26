@@ -2,12 +2,15 @@ import glob
 import json
 import logging
 import os
+import random
 import re
 from functools import partial
+from multiprocessing import Pool
 from pathlib import Path
 
 import hydra
 import lhotse
+import numpy as np
 import soundfile as sf
 from lhotse import CutSet, RecordingSet, SupervisionSet
 from lhotse.manipulation import combine as combine_manifests
@@ -18,17 +21,37 @@ from tqdm import tqdm
 from fastmss.rirsimulator import RIRSimulator
 from fastmss.simulator import ConversationalMeetingSimulator
 
-# configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_simulator: ConversationalMeetingSimulator = None
+
+
+def _worker_init(cfg, output_dir, all_cuts, rirs, noise_files, base_seed):
+    # --- Unique seed per worker using PID ---
+    # PID is unique per worker and stable for the lifetime of the process
+    worker_seed = base_seed + os.getpid()
+    np.random.seed(worker_seed % (2 ** 32))
+    random.seed(worker_seed)
+
+    global _simulator
+    _simulator = ConversationalMeetingSimulator(
+        cfg,
+        Path(output_dir).absolute() / Path("audio"),
+        all_cuts,
+        rirs=rirs,
+        noise_files=noise_files,
+    )
+
+
+def _worker_gen_audio(uuid: str):
+    """Called per task. Uses the process-local simulator."""
+    return _simulator.gen_audio(uuid)
+
 
 def discard(x, duration):
-
     info = sf.SoundFile(x)
-    # allow for a little longer since the meetings can be a bit longer when there
-    # are many speakers...
-    if (len(info) / info.samplerate) > (duration):
+    if (len(info) / info.samplerate) > duration:
         return x
     else:
         return None
@@ -36,10 +59,7 @@ def discard(x, duration):
 
 @hydra.main(version_base=None, config_path="config/table1", config_name="flat")
 def main(cfg: DictConfig) -> None:
-
-    if hasattr(cfg, 'seed') and cfg.seed is not None:
-        import numpy as np
-        import random
+    if hasattr(cfg, "seed") and cfg.seed is not None:
         np.random.seed(cfg.seed)
         random.seed(cfg.seed)
 
@@ -94,15 +114,13 @@ def main(cfg: DictConfig) -> None:
             )
             noise_files = filtered
 
-            assert len(noise_files) > 0, "No noise files found, wrong path ?"
+            assert len(noise_files) > 0, "No noise files found, wrong path?"
             out_file = os.path.join(cfg.output_dir, "manifests", "noise_files.txt")
             with open(out_file, "w") as f:
                 f.writelines([str(x) + "\n" for x in noise_files])
             # e.g. WHAM or SINS
             logger.info(f"Noise files paths saved in {out_file}")
-            # TODO impulsive noises ?
-        else:
-            noise_files = None
+
 
     if cfg.stage <= 3 and cfg.reverberate:
         logger.info("Simulating RIRs using Pyroomacoustics")
@@ -144,8 +162,7 @@ def main(cfg: DictConfig) -> None:
         else:
             noise_files = None
 
-        if cfg.reverberate == True:
-            # load rirs JSON
+        if cfg.reverberate:
             out_file = os.path.join(cfg.output_dir, "manifests", "all_rooms.json")
             with open(out_file, "r") as f:
                 rirs_files = json.load(f)
@@ -176,29 +193,37 @@ def main(cfg: DictConfig) -> None:
         else:
             rirs = None
 
-        simulator = ConversationalMeetingSimulator(
-            cfg,
-            Path(cfg.output_dir).absolute() / Path("audio"),
-            all_cuts,
-            rirs=rirs,
-            noise_files=noise_files,
-        )
-
         output_dir = Path(cfg.output_dir).absolute() / Path("manifests")
         output_dir.mkdir(exist_ok=True, parents=True)
 
-        uuids = iter([f"simulation_{x}" for x in range(cfg.n_meetings)])
-        work = partial(simulator.gen_audio)
+        uuids = [f"simulation_{x}" for x in range(cfg.n_meetings)]
+
+        base_seed = cfg.seed if (hasattr(cfg, "seed") and cfg.seed is not None) else 42
+
+        init_args = (
+            cfg,
+            str(cfg.output_dir),
+            all_cuts,
+            rirs,
+            noise_files,
+            base_seed,
+        )
 
         recordings = []
         supervisions = []
-        for c_rec, c_sup in tqdm(
-            parallel_map(work, uuids, num_jobs=cfg.n_jobs, threads=True),
-            total=cfg.n_meetings,
-            desc="Simulating meetings",
-        ):
-            recordings.append(c_rec)
-            supervisions.extend(c_sup)
+
+        with Pool(
+                processes=cfg.n_jobs,
+                initializer=_worker_init,
+                initargs=init_args,
+        ) as pool:
+            for c_rec, c_sup in tqdm(
+                    pool.imap_unordered(_worker_gen_audio, uuids),
+                    total=cfg.n_meetings,
+                    desc="Simulating meetings",
+            ):
+                recordings.append(c_rec)
+                supervisions.extend(c_sup)
 
         supervisions = SupervisionSet(supervisions)
         recordings = RecordingSet(recordings)
