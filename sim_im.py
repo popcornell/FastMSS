@@ -24,6 +24,7 @@ from tqdm import tqdm
 
 from fastmss.rirsimulator import RIRSimulator
 from fastmss.simulator import ConversationalMeetingSimulator
+from fastmss.utils import split_monocuts_batch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -182,6 +183,17 @@ def main(cfg: DictConfig) -> None:
             ).to_eager()
             logger.info(
                 f"Excluded speakers {exclude}: {before} -> {len(all_cuts)} cuts"
+            )
+
+        if hasattr(cfg, "split_fa_factor") and cfg.split_fa_factor is not None and cfg.split_fa_factor > 0:
+            all_cuts = all_cuts.to_eager()
+            before = len(all_cuts)
+            all_cuts = split_monocuts_batch(
+                all_cuts, cfg.split_fa_factor, num_jobs=cfg.n_jobs,
+            )
+            logger.info(
+                f"Split cuts at pauses > {cfg.split_fa_factor}s: "
+                f"{before} -> {len(all_cuts)} cuts"
             )
 
         logger.info("Saving source CutSet to disk")

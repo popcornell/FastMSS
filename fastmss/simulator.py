@@ -497,6 +497,7 @@ class ConversationalMeetingSimulator:
 
         utterances = []
         offsets = []
+        transition_types = []
 
         # this is tuned to librispeech
 
@@ -544,6 +545,7 @@ class ConversationalMeetingSimulator:
                 initial_offset = np.random.uniform(self.start_offset)
                 offsets.append(initial_offset)
                 utterances.append(cut)
+                transition_types.append(None)
             else:
                 if not c_spk in prev_offset_spk.keys():
                     c_offset = self.get_offset(
@@ -567,6 +569,7 @@ class ConversationalMeetingSimulator:
 
                 offsets.append(c_offset)
                 utterances.append(cut)
+                transition_types.append(transition_type)
 
             utt_indx += 1
             prev_cut = cut
@@ -793,10 +796,9 @@ class ConversationalMeetingSimulator:
                 adjusted_alignment = []
 
                 for align_item in orig_supervision.alignment["word"]:
-                    # Adjust start and end times by adding the offset
                     adjusted_item = AlignmentItem(
                         symbol=align_item.symbol,
-                        start=align_item.start - cut.start + offset,
+                        start=align_item.start + offset,
                         duration=align_item.duration,
                         score=getattr(align_item, "score", None),
                     )
@@ -818,7 +820,7 @@ class ConversationalMeetingSimulator:
                     {"word": alignment} if alignment is not None else None
                 ),  # Include adjusted alignments
                 custom={
-                    "transition_type": transition_type.name if i > 0 else "FIRST",
+                    "transition_type": transition_types[i].name if transition_types[i] is not None else "FIRST",
                     "speech_level_db": speech_lvls[i],
                     "original_cut_id": cut.id,
                 },
