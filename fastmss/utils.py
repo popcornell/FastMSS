@@ -311,6 +311,30 @@ def split_monocut_at_pauses(
 
     # If no splits were made, return original
     if not split_points:
+        adjusted_alignments = []
+        supervision =monocut.supervisions[0]
+        for item in supervision.alignment['word']:
+            adjusted_item = AlignmentItem(
+                symbol=item.symbol,
+                start=item.start - monocut.start,
+                duration=item.duration,
+                score=item.score,
+            )
+            adjusted_alignments.append(adjusted_item)
+        new_supervision = SupervisionSegment(
+            id=f"{supervision.id}",
+            recording_id=supervision.recording_id,
+            start=0,  # Relative to the new cut
+            duration=supervision.duration,
+            channel=supervision.channel,
+            text=supervision.text,
+            language=supervision.language,
+            speaker=supervision.speaker,
+            gender=supervision.gender,
+            custom=supervision.custom,
+            alignment={"word": adjusted_alignments},
+        )
+        monocut.supervisions = [new_supervision]
         return [monocut]
 
     # Create new MonoCuts for each segment
