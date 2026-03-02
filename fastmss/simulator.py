@@ -604,6 +604,7 @@ class ConversationalMeetingSimulator:
         spk2audio = {x: deepcopy(output_audio) for x in all_spk}
         spk2audio_anechoic = {x: deepcopy(output_audio) for x in all_spk}
 
+        do_reverb = self.cfg.reverberate and np.random.random() < getattr(self.cfg, "reverb_prob", 1.0)
         for cut, offset, c_speech_lvl in zip(utterances, offsets, speech_lvls):
             # load audio here
             c_audio = cut.load_audio()
@@ -616,7 +617,6 @@ class ConversationalMeetingSimulator:
             if self.cfg.use_fir:
                 c_audio = convolve(c_audio, fir_highpass[None, :], mode="full")
 
-            do_reverb = self.cfg.reverberate and np.random.random() < getattr(self.cfg, 'reverb_prob', 1.0)
             if do_reverb:
                 # Sample RIR position using random walk
                 c_spk = cut.supervisions[0].speaker
