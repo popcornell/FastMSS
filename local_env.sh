@@ -1,0 +1,5 @@
+export FastMSS_ROOT="/mnt/matylda5/ipoloka/projects/mt-asr-data-prep/FastMSS"
+export MADP_ROOT="/mnt/matylda5/ipoloka/projects/mt-asr-data-prep"
+export SIM_OUT_ROOT="/mnt/scratch/tmp/ipoloka/sims"
+export MANIFEST_DIR="/mnt/scratch/tmp/ipoloka/mt_asr_data/manifests/"
+export MUSAN_ROOT="/mnt/matylda2/data/MUSAN/musan/"

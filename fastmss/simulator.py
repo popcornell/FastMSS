@@ -497,6 +497,7 @@ class ConversationalMeetingSimulator:
 
         utterances = []
         offsets = []
+        transition_types = []
 
         # this is tuned to librispeech
 
@@ -541,6 +542,7 @@ class ConversationalMeetingSimulator:
                 initial_offset = np.random.uniform(self.start_offset)
                 offsets.append(initial_offset)
                 utterances.append(cut)
+                transition_types.append(None)
             else:
                 if not c_spk in prev_offset_spk.keys():
                     c_offset = self.get_offset(
@@ -564,6 +566,7 @@ class ConversationalMeetingSimulator:
 
                 offsets.append(c_offset)
                 utterances.append(cut)
+                transition_types.append(transition_type)
 
             utt_indx += 1
             prev_cut = cut
@@ -598,6 +601,7 @@ class ConversationalMeetingSimulator:
         spk2audio = {x: deepcopy(output_audio) for x in all_spk}
         spk2audio_anechoic = {x: deepcopy(output_audio) for x in all_spk}
 
+        do_reverb = self.cfg.reverberate and np.random.random() < getattr(self.cfg, 'reverb_prob', 1.0)
         for cut, offset, c_speech_lvl in zip(utterances, offsets, speech_lvls):
             # load audio here
             c_audio = cut.load_audio()
@@ -610,7 +614,6 @@ class ConversationalMeetingSimulator:
             if self.cfg.use_fir:
                 c_audio = convolve(c_audio, fir_highpass[None, :], mode="full")
 
-            do_reverb = self.cfg.reverberate and np.random.random() < getattr(self.cfg, 'reverb_prob', 1.0)
             if do_reverb:
                 # Sample RIR position using random walk
                 c_spk = cut.supervisions[0].speaker
@@ -793,7 +796,7 @@ class ConversationalMeetingSimulator:
                     # Adjust start and end times by adding the offset
                     adjusted_item = AlignmentItem(
                         symbol=align_item.symbol,
-                        start=align_item.start - cut.start + offset,
+                        start=align_item.start + offset,
                         duration=align_item.duration,
                         score=getattr(align_item, "score", None),
                     )
@@ -815,8 +818,7 @@ class ConversationalMeetingSimulator:
                     {"word": alignment} if alignment is not None else None
                 ),  # Include adjusted alignments
                 custom={
-                    "transition_type": transition_type.name if i > 0 else "FIRST",
-                    "speech_level_db": speech_lvls[i],
+                    "transition_type": transition_types[i].name if transition_types[i] is not None else "FIRST",                    "speech_level_db": speech_lvls[i],
                     "original_cut_id": cut.id,
                 },
             )
