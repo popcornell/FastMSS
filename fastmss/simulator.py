@@ -6,6 +6,25 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import soundfile as sf
+
+
+import threading
+
+_audio_cache = {}
+_audio_cache_lock = threading.Lock()
+
+
+def cached_load_audio(cut):
+    """Load audio for a cut, using a thread-safe in-memory cache.
+    Returns a copy so callers can mutate freely."""
+    cid = cut.id
+    if cid in _audio_cache:
+        return _audio_cache[cid].copy()
+    audio = cut.load_audio()
+    with _audio_cache_lock:
+        if len(_audio_cache) < 4096:
+            _audio_cache[cid] = audio.copy()
+    return audio
 from lhotse import AudioSource, MonoCut, Recording, RecordingSet, SupervisionSet
 from lhotse.supervision import AlignmentItem, SupervisionSegment
 from lhotse.utils import add_durations, uuid4
@@ -78,7 +97,7 @@ class ConversationalMeetingSimulator:
 
         logger.info("Removing speakers with too few utterances.")
         prev_spk = len(spk2cuts.keys())
-        for spk in spk2cuts.keys():
+        for spk in list(spk2cuts.keys()):
             if len(spk2cuts[spk]) < self.cfg.min_spk_utt:
                 del spk2cuts[spk]
         logger.info(f"Before {prev_spk}, now {len(spk2cuts.keys())} speakers.")
@@ -185,90 +204,64 @@ class ConversationalMeetingSimulator:
                          utterances, offsets, durations, max_concurrent):
         """
         Find the earliest valid offset that doesn't exceed max concurrent speakers.
-
-        Args:
-            proposed_offset: Initially proposed offset from get_offset()
-            new_duration: Duration of the new utterance
-            new_speaker: Speaker ID of the new utterance
-            utterances: List of existing MonoCut objects
-            offsets: List of start times for existing utterances
-            durations: List of durations for existing utterances
-            max_concurrent: Maximum allowed concurrent speakers
-
-        Returns:
-            Adjusted offset that respects the max_concurrent constraint
+        Vectorized implementation for speed.
         """
         if max_concurrent is None or max_concurrent <= 0:
             return proposed_offset
 
-        # Check if proposed offset is valid
-        # We need to check the entire duration of the new utterance
-        proposed_end = proposed_offset + new_duration
+        # Build arrays once
+        off_arr = np.array(offsets)
+        dur_arr = np.array(durations)
+        end_arr = off_arr + dur_arr
+        speakers = [utt.supervisions[0].speaker for utt in utterances]
 
-        # Sample points throughout the new utterance to check
-        num_checks = max(10, int(new_duration * 10))  # Check at ~10Hz
-        check_points = np.linspace(proposed_offset, proposed_end - 0.01, num_checks)
+        def max_concurrent_in_range(start, end):
+            """Check max concurrent speakers over a range using event boundaries."""
+            # Only consider utterances that overlap [start, end)
+            mask = (off_arr < end) & (end_arr > start)
+            if not np.any(mask):
+                return 1  # just the new speaker
 
-        max_overlap = 0
-        for t in check_points:
-            concurrent = self.count_concurrent_speakers(t, utterances, offsets, durations)
-            # Add 1 for the new speaker if not already counted
-            if concurrent > 0:  # There are existing utterances
-                # Count if adding this new speaker would exceed
-                active_speakers = set()
-                for utt, offset, duration in zip(utterances, offsets, durations):
-                    if offset <= t < offset + duration:
-                        active_speakers.add(utt.supervisions[0].speaker)
-                if new_speaker not in active_speakers:
-                    concurrent += 1
+            # Collect all boundary events within [start, end)
+            rel_starts = np.maximum(off_arr[mask], start)
+            rel_ends = np.minimum(end_arr[mask], end)
+            idx = np.where(mask)[0]
+
+            # Check at each boundary point
+            boundary_times = np.unique(np.concatenate([rel_starts, rel_ends]))
+            # Use midpoints to check inside intervals
+            if len(boundary_times) < 2:
+                check_times = boundary_times
             else:
-                concurrent = 1  # Just the new speaker
+                check_times = (boundary_times[:-1] + boundary_times[1:]) / 2
 
-            max_overlap = max(max_overlap, concurrent)
+            max_c = 1
+            for t in check_times:
+                active = (off_arr[mask] <= t) & (end_arr[mask] > t)
+                active_spk = set(speakers[i] for i in idx[active])
+                c = len(active_spk) + (1 if new_speaker not in active_spk else 0)
+                if c > max_c:
+                    max_c = c
+            return max_c
 
-        # If proposed offset is valid, return it
-        if max_overlap <= max_concurrent:
+        proposed_end = proposed_offset + new_duration
+        if max_concurrent_in_range(proposed_offset, proposed_end) <= max_concurrent:
             return proposed_offset
 
-        # Otherwise, find the next valid time
-        # Collect all utterance end times after proposed_offset
-        end_times = []
-        for offset, duration in zip(offsets, durations):
-            end_time = offset + duration
-            if end_time > proposed_offset:
-                end_times.append(end_time)
+        # Find the next valid time from utterance end times
+        end_times = end_arr[end_arr > proposed_offset]
 
-        if not end_times:
+        if len(end_times) == 0:
             return proposed_offset
 
-        # Sort end times
-        end_times = sorted(end_times)
+        end_times = np.sort(end_times)
 
-        # Try each end time as a potential start point
         for candidate_offset in end_times:
             candidate_end = candidate_offset + new_duration
-            check_points = np.linspace(candidate_offset, candidate_end - 0.01, num_checks)
-
-            is_valid = True
-            for t in check_points:
-                concurrent = self.count_concurrent_speakers(t, utterances, offsets, durations)
-                # Check if adding new speaker would exceed limit
-                active_speakers = set()
-                for utt, offset, duration in zip(utterances, offsets, durations):
-                    if offset <= t < offset + duration:
-                        active_speakers.add(utt.supervisions[0].speaker)
-                if new_speaker not in active_speakers:
-                    concurrent += 1
-
-                if concurrent > max_concurrent:
-                    is_valid = False
-                    break
-
-            if is_valid:
+            if max_concurrent_in_range(candidate_offset, candidate_end) <= max_concurrent:
                 return candidate_offset
 
-        # If no valid offset found among end times, push to after all current utterances
-        return max(offsets[-1] + durations[-1] if offsets else 0, proposed_offset)
+        return max(off_arr[-1] + dur_arr[-1] if len(off_arr) > 0 else 0, proposed_offset)
 
     def create_fir_highpass(self, cutoff_freq, num_taps=101, window="hamming"):
         """
@@ -474,6 +467,11 @@ class ConversationalMeetingSimulator:
         return normalized_audio, gain
 
     def gen_audio(self, indx):
+        # Resolve OmegaConf to SimpleNamespace once to avoid __getattr__ overhead
+        from types import SimpleNamespace
+        if not isinstance(self.cfg, SimpleNamespace):
+            from omegaconf import OmegaConf
+            self.cfg = SimpleNamespace(**OmegaConf.to_container(self.cfg, resolve=True))
 
         min_spk, max_spk = self.cfg.min_max_spk
         n_speakers = np.random.randint(min_spk, max_spk + 1)
@@ -493,11 +491,15 @@ class ConversationalMeetingSimulator:
         offsets = []
 
         # this is tuned to librispeech
-
-        fir_highpass = self.create_fir_highpass(40, 63)
+        if self.cfg.use_fir:
+            fir_highpass = self.create_fir_highpass(40, 63)
 
         if self.rirs is not None:
             c_room_rirs = self.rirs[np.random.randint(0, len(self.rirs))]
+
+        # Initialize speaker position tracking for random walk
+        spk2current_pos = {}  # Track 3D position for each speaker
+        spk2rir_idx = {}      # Track current RIR index for each speaker
 
         while current_time < target_dur or len(seen_speakers) < len(sampled_spk):
 
@@ -564,8 +566,8 @@ class ConversationalMeetingSimulator:
                 prev_offset_spk[prev_speaker] = prev_offset + cut.duration
             else:
                 prev_offset_spk[prev_speaker] = max(
-                    prev_offset + cut.duration, prev_offset_spk[prev_speaker]
-                )
+                    prev_offset + cut.duration + 1e-2, prev_offset_spk[prev_speaker]
+                ) # small eps here to avoid self overlap
 
             current_time = prev_offset + cut.duration
 
@@ -584,8 +586,12 @@ class ConversationalMeetingSimulator:
 
         # we need to check if all cuts have only one supervions TODO
         all_spk = list(set([x.supervisions[0].speaker for x in utterances]))
-        spk2audio = {x: deepcopy(output_audio) for x in all_spk}
-        spk2audio_anechoic = {x: deepcopy(output_audio) for x in all_spk}
+        if self.cfg.save_spk:
+            spk2audio = {x: deepcopy(output_audio) for x in all_spk}
+            spk2audio_anechoic = {x: deepcopy(output_audio) for x in all_spk} if self.cfg.save_anechoic else {}
+        else:
+            spk2audio = {}
+            spk2audio_anechoic = {}
 
         for cut, offset, c_speech_lvl in zip(utterances, offsets, speech_lvls):
             # load audio here
@@ -600,7 +606,36 @@ class ConversationalMeetingSimulator:
                 c_audio = convolve(c_audio, fir_highpass[None, :], mode="full")
 
             if self.cfg.reverberate:
-                c_rir_file = str(np.random.choice(c_room_rirs))
+                # Sample RIR position using random walk
+                c_spk = cut.supervisions[0].speaker
+                if c_spk not in spk2current_pos:
+                    # First utterance: random position
+                    rir_idx = np.random.randint(0, len(c_room_rirs))
+                    spk2rir_idx[c_spk] = rir_idx
+                    spk2current_pos[c_spk] = c_room_rirs[rir_idx]['pos']
+                    c_rir_file = str(c_room_rirs[rir_idx]['file'])
+                else:
+                    # Subsequent: find RIRs within max_position_change distance
+                    current_pos = spk2current_pos[c_spk]
+                    candidates = []
+                    for i, rir_info in enumerate(c_room_rirs):
+                        dist = np.linalg.norm(np.array(rir_info['pos']) - np.array(current_pos))
+                        if dist <= self.cfg.max_position_change:
+                            candidates.append((i, dist))
+
+                    if candidates:
+                        # Sample from nearby positions (weighted by inverse distance)
+                        weights = [1.0 / (d + 0.01) for _, d in candidates]
+                        weights = np.array(weights) / sum(weights)
+                        chosen_idx = np.random.choice([i for i, _ in candidates], p=weights)
+                    else:
+                        # No nearby RIRs, pick closest one
+                        chosen_idx = min(range(len(c_room_rirs)),
+                                        key=lambda i: np.linalg.norm(np.array(c_room_rirs[i]['pos']) - np.array(current_pos)))
+
+                    spk2rir_idx[c_spk] = chosen_idx
+                    spk2current_pos[c_spk] = c_room_rirs[chosen_idx]['pos']
+                    c_rir_file = str(c_room_rirs[chosen_idx]['file'])
 
                 c_rir, fs = sf.read(c_rir_file)
                 assert fs == self.cfg.samplerate
@@ -611,6 +646,16 @@ class ConversationalMeetingSimulator:
                 )
                 c_rir_anechoic, fs = sf.read(c_rir_anechoic)
                 assert fs == self.cfg.samplerate
+
+                # Find direct sound (peak) and trim RIRs to start there
+                # This removes pre-delay and maintains time alignment
+                direct_idx = np.argmax(np.abs(c_rir))
+                c_rir = c_rir[direct_idx:]
+
+                direct_idx_anechoic = np.argmax(np.abs(c_rir_anechoic))
+                c_rir_anechoic = c_rir_anechoic[direct_idx_anechoic:]
+
+                # Now convolve with mode="full" to preserve reverb tail
                 c_audio_anechoic = convolve(
                     c_audio, c_rir_anechoic[None, :], mode="full"
                 )
@@ -619,21 +664,15 @@ class ConversationalMeetingSimulator:
                     c_rir = c_rir[:, np.newaxis]
                 c_audio = convolve(c_audio, c_rir.T, mode="full")
 
-                if c_audio.shape[0] > output_audio.shape[0]:
-                    output_audio = np.pad(
-                    output_audio,
-                    ((0,  c_audio.shape[0] -1), (0, 0)),
-                    mode="constant")
-
-                c_audio_anechoic = np.pad(
-                    c_audio_anechoic,
-                    ((0, 0), (0, c_audio.shape[-1] - c_audio_anechoic.shape[-1])),
-                    mode="constant",
-                )
-
-                if c_audio_anechoic.shape[-1] > c_audio.shape[-1]:
-                    import pdb
-                    pdb.set_trace()
+                # Ensure anechoic matches reverberant length
+                if c_audio_anechoic.shape[-1] < c_audio.shape[-1]:
+                    c_audio_anechoic = np.pad(
+                        c_audio_anechoic,
+                        ((0, 0), (0, c_audio.shape[-1] - c_audio_anechoic.shape[-1])),
+                        mode="constant",
+                    )
+                elif c_audio_anechoic.shape[-1] > c_audio.shape[-1]:
+                    c_audio_anechoic = c_audio_anechoic[:, :c_audio.shape[-1]]
 
             else:
                 assert self.cfg.save_anechoic == False
@@ -649,11 +688,12 @@ class ConversationalMeetingSimulator:
                 residual = (offset + c_audio.shape[-1]) - maxlen
                 output_audio = np.pad(output_audio, ((0, 0), (0, residual)), mode="constant")
 
-                for c_spk in spk2audio.keys():
-                    spk2audio[c_spk] = np.pad(spk2audio[c_spk], ((0, 0), (0, residual)), mode="constant")
-                if self.cfg.save_anechoic:
+                if self.cfg.save_spk:
                     for c_spk in spk2audio.keys():
-                        spk2audio_anechoic[c_spk] = np.pad(spk2audio_anechoic[c_spk], ((0, 0), (0, residual)), mode="constant")
+                        spk2audio[c_spk] = np.pad(spk2audio[c_spk], ((0, 0), (0, residual)), mode="constant")
+                    if self.cfg.save_anechoic:
+                        for c_spk in spk2audio_anechoic.keys():
+                            spk2audio_anechoic[c_spk] = np.pad(spk2audio_anechoic[c_spk], ((0, 0), (0, residual)), mode="constant")
 
 
             output_audio[:, offset : offset + c_audio.shape[-1]] += c_audio
@@ -674,7 +714,8 @@ class ConversationalMeetingSimulator:
         # add some gaussian noise here.
         # if we have noise we can add that too. e.g. wham and sins, qut etc
 
-        if self.cfg.add_noise:
+        noise_prob = getattr(self.cfg, 'noise_probability_global', 1.0)
+        if self.cfg.add_noise and np.random.random() < noise_prob:
             min_lvl = min(speech_lvls)
             if self.noise_files is None:
                 output_audio = self.add_gaussian_noise(output_audio, min_lvl, (-30, 3))
@@ -702,25 +743,28 @@ class ConversationalMeetingSimulator:
         Path(self.output_dir).mkdir(exist_ok=True)
         audio_path = os.path.join(self.output_dir, audio_filename)
 
-        # Save audio to disk
-        sf.write(audio_path, output_audio.T, self.cfg.samplerate)
+        defer_write = getattr(self.cfg, "defer_write", False)
 
-        if self.cfg.save_spk:
-            for k in spk2audio:
-                sf.write(
-                    os.path.join(self.output_dir, f"{recording_id}-spk-{k}.wav"),
-                    spk2audio[k].T,
-                    self.cfg.samplerate,
-                )
-            if self.cfg.save_anechoic:
-                for k in spk2audio_anechoic:
+        if not defer_write:
+            # Save audio to disk
+            sf.write(audio_path, output_audio.T, self.cfg.samplerate)
+
+            if self.cfg.save_spk:
+                for k in spk2audio:
                     sf.write(
-                        os.path.join(
-                            self.output_dir, f"{recording_id}-spk-{k}-anechoic.wav"
-                        ),
-                        spk2audio_anechoic[k].T,
+                        os.path.join(self.output_dir, f"{recording_id}-spk-{k}.wav"),
+                        spk2audio[k].T,
                         self.cfg.samplerate,
                     )
+                if self.cfg.save_anechoic:
+                    for k in spk2audio_anechoic:
+                        sf.write(
+                            os.path.join(
+                                self.output_dir, f"{recording_id}-spk-{k}-anechoic.wav"
+                            ),
+                            spk2audio_anechoic[k].T,
+                            self.cfg.samplerate,
+                        )
 
         # Create Lhotse Recording
         recording = Recording(
@@ -776,4 +820,6 @@ class ConversationalMeetingSimulator:
             )
             supervisions.append(supervision)
 
+        if defer_write:
+            return recording, supervisions, output_audio
         return recording, supervisions
