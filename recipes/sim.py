@@ -16,9 +16,9 @@ import lhotse
 import numpy as np
 import soundfile as sf
 from lhotse import CutSet, Recording, RecordingSet, SupervisionSet
-from lhotse.supervision import SupervisionSegment
 from lhotse.manipulation import combine as combine_manifests
 from lhotse.parallel import parallel_map
+from lhotse.supervision import SupervisionSegment
 from omegaconf import DictConfig
 from tqdm import tqdm
 
@@ -34,7 +34,7 @@ _simulator: ConversationalMeetingSimulator = None
 
 def _worker_init(cfg, output_dir, all_cuts, rirs, noise_files, base_seed):
     worker_seed = base_seed + os.getpid()
-    np.random.seed(worker_seed % (2 ** 32))
+    np.random.seed(worker_seed % (2**32))
     random.seed(worker_seed)
 
     global _simulator
@@ -117,14 +117,16 @@ def nemo_manifest_to_cutset(nemo_manifest_path):
                     duration = float(parts[4])
                     speaker = parts[7]
 
-                    sups.append(SupervisionSegment(
-                        id=f"{recording_id}_{seg_idx:06d}",
-                        recording_id=recording_id,
-                        start=round(start, 6),
-                        duration=round(duration, 6),
-                        channel=channel,
-                        speaker=speaker,
-                    ))
+                    sups.append(
+                        SupervisionSegment(
+                            id=f"{recording_id}_{seg_idx:06d}",
+                            recording_id=recording_id,
+                            start=round(start, 6),
+                            duration=round(duration, 6),
+                            channel=channel,
+                            speaker=speaker,
+                        )
+                    )
                     seg_idx += 1
 
     return CutSet.from_manifests(
@@ -157,34 +159,63 @@ def main(cfg: DictConfig) -> None:
     # Stage 1: Load source CutSet  (-> data_dir)
     # ------------------------------------------------------------------ #
     if cfg.stage <= 1 and _is_done(Path(data_dir) / "manifests" / ".done"):
-        logger.info("Stage 1 already done (found .done in data_dir/manifests), skipping.")
+        logger.info(
+            "Stage 1 already done (found .done in data_dir/manifests), skipping."
+        )
     elif cfg.stage <= 1:
         Path(data_dir).mkdir(exist_ok=True, parents=True)
         all_cuts = []
         for split in cfg.dset_splits:
-            c_cut = CutSet.from_file(Path(cfg.manifest_dir)
-                / f"{cfg.manifest_prefix}_{split}.jsonl.gz")
+            c_cut = CutSet.from_file(
+                Path(cfg.manifest_dir) / f"{cfg.manifest_prefix}_{split}.jsonl.gz"
+            )
             all_cuts.append(c_cut)
         all_cuts = combine_manifests(all_cuts)
+
+        all_cuts = all_cuts.to_eager()
+        sample = all_cuts.subset(first=min(200, len(all_cuts)))
+        n_with_align = sum(
+            1
+            for cut in sample
+            for sup in cut.supervisions
+            if sup.alignment and "word" in sup.alignment
+        )
+        if n_with_align == 0:
+            logger.warning(
+                "=" * 72 + "\n"
+                "  NO WORD-LEVEL ALIGNMENTS FOUND in source CutSet.\n"
+                "  FastMSS relies on word alignments to split utterances at natural\n"
+                "  pauses (split_fa_factor) and to place speaker turns precisely.\n"
+                "  Without alignments, simulated conversations will have less\n"
+                "  realistic timing and overlap -- separation/diarization/TS-ASR\n"
+                "  performance trained on this data will be noticeably worse.\n"
+                "  For LibriSpeech: run `lhotse prepare librispeech --alignments-dir\n"
+                "  <CorentinJ-style dir with *.alignment.txt files>` (see\n"
+                "  https://github.com/CorentinJ/librispeech-alignments).\n" + "=" * 72
+            )
 
         exclude = set(str(s) for s in (cfg.get("exclude_speakers") or []))
         if exclude:
             all_cuts = all_cuts.to_eager()
             before = len(all_cuts)
             all_cuts = all_cuts.filter(
-                lambda cut: all(
-                    str(s.speaker) not in exclude for s in cut.supervisions
-                )
+                lambda cut: all(str(s.speaker) not in exclude for s in cut.supervisions)
             ).to_eager()
             logger.info(
                 f"Excluded speakers {exclude}: {before} -> {len(all_cuts)} cuts"
             )
 
-        if hasattr(cfg, "split_fa_factor") and cfg.split_fa_factor is not None and cfg.split_fa_factor > 0:
+        if (
+            hasattr(cfg, "split_fa_factor")
+            and cfg.split_fa_factor is not None
+            and cfg.split_fa_factor > 0
+        ):
             all_cuts = all_cuts.to_eager()
             before = len(all_cuts)
             all_cuts = split_monocuts_batch(
-                all_cuts, cfg.split_fa_factor, num_jobs=cfg.n_jobs,
+                all_cuts,
+                cfg.split_fa_factor,
+                num_jobs=cfg.n_jobs,
             )
             logger.info(
                 f"Split cuts at pauses > {cfg.split_fa_factor}s: "
@@ -211,10 +242,15 @@ def main(cfg: DictConfig) -> None:
                     noise_files.extend(tmp)
 
             # Apply regex filter if specified
-            if hasattr(cfg, 'noise_filename_pattern') and cfg.noise_filename_pattern is not None:
+            if (
+                hasattr(cfg, "noise_filename_pattern")
+                and cfg.noise_filename_pattern is not None
+            ):
                 pattern = re.compile(cfg.noise_filename_pattern)
                 original_count = len(noise_files)
-                noise_files = [f for f in noise_files if pattern.search(os.path.basename(f))]
+                noise_files = [
+                    f for f in noise_files if pattern.search(os.path.basename(f))
+                ]
                 filtered_count = original_count - len(noise_files)
                 logger.info(
                     f"Applied filename pattern '{cfg.noise_filename_pattern}': "
@@ -255,7 +291,9 @@ def main(cfg: DictConfig) -> None:
             logger.info("Simulating RIRs using Pyroomacoustics")
 
             from copy import deepcopy
+
             from omegaconf import OmegaConf
+
             rir_cfg = deepcopy(cfg)
             OmegaConf.update(rir_cfg, "output_dir", rir_dir)
             simulator = RIRSimulator(rir_cfg)
@@ -326,14 +364,14 @@ def main(cfg: DictConfig) -> None:
         supervisions = []
 
         with Pool(
-                processes=cfg.n_jobs,
-                initializer=_worker_init,
-                initargs=init_args,
+            processes=cfg.n_jobs,
+            initializer=_worker_init,
+            initargs=init_args,
         ) as pool:
             for c_rec, c_sup in tqdm(
-                    pool.imap_unordered(_worker_gen_audio, uuids),
-                    total=cfg.n_meetings,
-                    desc="Simulating meetings",
+                pool.imap_unordered(_worker_gen_audio, uuids),
+                total=cfg.n_meetings,
+                desc="Simulating meetings",
             ):
                 recordings.append(c_rec)
                 supervisions.extend(c_sup)
@@ -379,13 +417,17 @@ def main(cfg: DictConfig) -> None:
             except NameError:
                 logger.info("Loading simulated manifests from disk")
                 recordings = lhotse.load_manifest(
-                    manifest_dir / f"synth-{cfg.manifest_prefix}-train-recordings.jsonl.gz"
+                    manifest_dir
+                    / f"synth-{cfg.manifest_prefix}-train-recordings.jsonl.gz"
                 )
                 supervisions = lhotse.load_manifest(
-                    manifest_dir / f"synth-{cfg.manifest_prefix}-train-supervisions.jsonl.gz"
+                    manifest_dir
+                    / f"synth-{cfg.manifest_prefix}-train-supervisions.jsonl.gz"
                 )
 
-            cutset = CutSet.from_manifests(recordings=recordings, supervisions=supervisions)
+            cutset = CutSet.from_manifests(
+                recordings=recordings, supervisions=supervisions
+            )
 
             if save_rttm:
                 # --- RTTM generation ---
@@ -401,7 +443,9 @@ def main(cfg: DictConfig) -> None:
                     rec_id = cut.recording.id if cut.recording else cut.id
                     for sup in cut.supervisions:
                         total_segments += 1
-                        speaker = str(sup.speaker) if sup.speaker is not None else "unknown"
+                        speaker = (
+                            str(sup.speaker) if sup.speaker is not None else "unknown"
+                        )
                         channel = sup.channel
 
                         if sup.alignment and "word" in sup.alignment:
@@ -443,7 +487,9 @@ def main(cfg: DictConfig) -> None:
                 logger.info("Generating NeMo-style diarization manifest")
 
                 if not save_rttm:
-                    logger.warning("save_nemo_manifest=true requires save_rttm=true. Generating RTTMs first.")
+                    logger.warning(
+                        "save_nemo_manifest=true requires save_rttm=true. Generating RTTMs first."
+                    )
                     # Ensure RTTMs exist
                     rttm_out_dir = Path(cfg.output_dir).absolute() / "rttm"
                     if not rttm_out_dir.exists():
@@ -457,13 +503,17 @@ def main(cfg: DictConfig) -> None:
                 for sup in supervisions:
                     rec2sups[sup.recording_id].append(sup)
 
-                nemo_manifest_path = Path(cfg.output_dir).absolute() / "nemo_manifest.json"
+                nemo_manifest_path = (
+                    Path(cfg.output_dir).absolute() / "nemo_manifest.json"
+                )
                 n_written = 0
                 with open(nemo_manifest_path, "w") as f_out:
                     for rec in recordings:
                         sups = rec2sups[rec.id]
                         if not sups:
-                            logger.warning(f"Recording {rec.id} has no supervisions, skipping")
+                            logger.warning(
+                                f"Recording {rec.id} has no supervisions, skipping"
+                            )
                             continue
 
                         audio_path = rec.sources[0].source
@@ -485,7 +535,9 @@ def main(cfg: DictConfig) -> None:
                 )
 
                 # --- NeMo manifest statistics (round-trip verification) ---
-                logger.info("Computing statistics from NeMo manifest (round-trip verification)")
+                logger.info(
+                    "Computing statistics from NeMo manifest (round-trip verification)"
+                )
                 nemo_cutset = nemo_manifest_to_cutset(str(nemo_manifest_path))
                 buf = io.StringIO()
                 old_stdout = sys.stdout
@@ -495,7 +547,9 @@ def main(cfg: DictConfig) -> None:
                 finally:
                     sys.stdout = old_stdout
                 stats_text = buf.getvalue()
-                logger.info("NeMo manifest statistics (from RTTM, post-merge):\n%s", stats_text)
+                logger.info(
+                    "NeMo manifest statistics (from RTTM, post-merge):\n%s", stats_text
+                )
 
                 stats_path = Path(cfg.output_dir).absolute() / "overlap_stats.txt"
                 stats_path.write_text(stats_text)

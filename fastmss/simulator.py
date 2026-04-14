@@ -9,11 +9,12 @@ from typing import Optional
 import lhotse
 import numpy as np
 import soundfile as sf
-from fastmss.hmm_turn_taking import TransitionParams, TransitionType
 from lhotse import AudioSource, Recording
 from lhotse.supervision import AlignmentItem, SupervisionSegment
 from lhotse.utils import uuid4
 from scipy.signal import convolve, firwin
+
+from fastmss.hmm_turn_taking import TransitionParams, TransitionType
 
 from .utils import concatenate_audio_with_crossfade, repeat_audio_with_crossfade
 
@@ -55,9 +56,13 @@ class ConversationalMeetingSimulator:
         self.epsilon = 0.03  # For truncated exponential distribution
         self.rirs = rirs
         self.noise_files = noise_files  # optional background noise.
-        self.start_offset = getattr(self.cfg, 'start_offset', 0)
+        self.start_offset = getattr(self.cfg, "start_offset", 0)
         # if not available, gaussian is used.
-        self.hmm_params = TransitionParams(**cfg.hmm_params) if hasattr(cfg, "hmm_params") else TransitionParams()
+        self.hmm_params = (
+            TransitionParams(**cfg.hmm_params)
+            if hasattr(cfg, "hmm_params")
+            else TransitionParams()
+        )
         if cfg.hmm_fit_transitions_to:
             self.hmm_params.fit(lhotse.load_manifest(cfg.hmm_fit_transitions_to))
 
@@ -76,7 +81,12 @@ class ConversationalMeetingSimulator:
             ):
                 continue
             # Alignment filtering: skip cuts without word-level alignments
-            if not (hasattr(cut.supervisions[0], "alignment") and cut.supervisions[0].alignment and "word" in cut.supervisions[0].alignment and len(cut.supervisions[0].alignment["word"]) > 0):
+            if not (
+                hasattr(cut.supervisions[0], "alignment")
+                and cut.supervisions[0].alignment
+                and "word" in cut.supervisions[0].alignment
+                and len(cut.supervisions[0].alignment["word"]) > 0
+            ):
                 continue
             c_spk = cut.supervisions[0].speaker
             assert (
@@ -166,8 +176,16 @@ class ConversationalMeetingSimulator:
         transition_idx = np.random.choice(len(TransitionType), p=probs)
         return list(TransitionType)[transition_idx]
 
-    def find_valid_offset(self, proposed_offset, new_duration, new_speaker,
-                         utterances, offsets, durations, max_concurrent):
+    def find_valid_offset(
+        self,
+        proposed_offset,
+        new_duration,
+        new_speaker,
+        utterances,
+        offsets,
+        durations,
+        max_concurrent,
+    ):
         """
         Find the earliest valid offset that doesn't exceed max concurrent speakers.
         Vectorized implementation for speed.
@@ -236,10 +254,15 @@ class ConversationalMeetingSimulator:
 
         for candidate_offset in end_times:
             candidate_end = candidate_offset + new_duration
-            if max_concurrent_in_range(candidate_offset, candidate_end) <= max_concurrent:
+            if (
+                max_concurrent_in_range(candidate_offset, candidate_end)
+                <= max_concurrent
+            ):
                 return candidate_offset
 
-        return max(off_arr[-1] + dur_arr[-1] if len(off_arr) > 0 else 0, proposed_offset)
+        return max(
+            off_arr[-1] + dur_arr[-1] if len(off_arr) > 0 else 0, proposed_offset
+        )
 
     def create_fir_highpass(self, cutoff_freq, num_taps=101, window="hamming"):
         """
@@ -301,7 +324,7 @@ class ConversationalMeetingSimulator:
 
     def add_real_noise(self, audio, min_speech_level_db, range_db_offset=(-15, 3)):
         # Check if multi-noise sampling is enabled
-        multi_noise_enabled = getattr(self.cfg, 'multi_noise_sampling', True)
+        multi_noise_enabled = getattr(self.cfg, "multi_noise_sampling", True)
 
         if len(audio) == 0:
             return audio
@@ -331,13 +354,21 @@ class ConversationalMeetingSimulator:
                     read_length = min(available_length, tgt_len)
                 else:
                     # Subsequent segments - read chunks, accounting for crossfade loss
-                    remaining_needed = tgt_len - total_sampled + (len(noise_segments) * crossfade_samples)
-                    read_length = min(available_length, max(remaining_needed, crossfade_samples * 2))
+                    remaining_needed = (
+                        tgt_len
+                        - total_sampled
+                        + (len(noise_segments) * crossfade_samples)
+                    )
+                    read_length = min(
+                        available_length, max(remaining_needed, crossfade_samples * 2)
+                    )
 
                 if available_length > read_length:
                     # Read a random segment from this file
                     cursor = np.random.randint(0, available_length - read_length)
-                    c_noise, _ = sf.read(c_noise_file, start=cursor, stop=cursor + read_length)
+                    c_noise, _ = sf.read(
+                        c_noise_file, start=cursor, stop=cursor + read_length
+                    )
                 else:
                     # Read the entire file
                     c_noise, _ = sf.read(c_noise_file)
@@ -356,12 +387,14 @@ class ConversationalMeetingSimulator:
                 total_sampled += len(c_noise)
 
             # Concatenate all noise segments with crossfading
-            c_noise = concatenate_audio_with_crossfade(noise_segments, crossfade_samples)
+            c_noise = concatenate_audio_with_crossfade(
+                noise_segments, crossfade_samples
+            )
 
             # Ensure we have exactly the target length
             if len(c_noise) < tgt_len:
                 # Should rarely happen now, but pad if needed
-                c_noise = np.pad(c_noise, (0, tgt_len - len(c_noise)), mode='constant')
+                c_noise = np.pad(c_noise, (0, tgt_len - len(c_noise)), mode="constant")
             elif len(c_noise) > tgt_len:
                 # Trim to exact length
                 c_noise = c_noise[:tgt_len]
@@ -448,6 +481,7 @@ class ConversationalMeetingSimulator:
         # Resolve OmegaConf to SimpleNamespace once to avoid __getattr__ overhead
         if not isinstance(self.cfg, SimpleNamespace):
             from omegaconf import OmegaConf
+
             self.cfg = SimpleNamespace(**OmegaConf.to_container(self.cfg, resolve=True))
 
         min_spk, max_spk = self.cfg.min_max_spk
@@ -519,14 +553,19 @@ class ConversationalMeetingSimulator:
                     )
 
                 # Apply max concurrent speakers constraint if configured
-                max_concurrent = getattr(self.cfg, 'max_concurrent_speakers', None)
+                max_concurrent = getattr(self.cfg, "max_concurrent_speakers", None)
                 if max_concurrent is not None and max_concurrent > 0:
                     # Build durations list for existing utterances
                     durations = [u.duration for u in utterances]
                     # Find valid offset respecting the constraint
                     c_offset = self.find_valid_offset(
-                        c_offset, cut.duration, c_spk,
-                        utterances, offsets, durations, max_concurrent
+                        c_offset,
+                        cut.duration,
+                        c_spk,
+                        utterances,
+                        offsets,
+                        durations,
+                        max_concurrent,
                     )
 
                 offsets.append(c_offset)
@@ -568,7 +607,9 @@ class ConversationalMeetingSimulator:
             spk2audio = {}
             spk2audio_anechoic = {}
 
-        do_reverb = self.cfg.reverberate and np.random.random() < getattr(self.cfg, 'reverb_prob', 1.0)
+        do_reverb = self.cfg.reverberate and np.random.random() < getattr(
+            self.cfg, "reverb_prob", 1.0
+        )
         for cut, offset, c_speech_lvl in zip(utterances, offsets, speech_lvls):
             # load audio here using cached loader
             c_audio = cached_load_audio(cut)
@@ -621,7 +662,7 @@ class ConversationalMeetingSimulator:
                         mode="constant",
                     )
                 elif c_audio_anechoic.shape[-1] > c_audio.shape[-1]:
-                    c_audio_anechoic = c_audio_anechoic[:, :c_audio.shape[-1]]
+                    c_audio_anechoic = c_audio_anechoic[:, : c_audio.shape[-1]]
 
             else:
                 assert self.cfg.save_anechoic == False
@@ -635,22 +676,31 @@ class ConversationalMeetingSimulator:
             maxlen = output_audio.shape[-1]
             if (offset + c_audio.shape[-1]) > maxlen:
                 residual = (offset + c_audio.shape[-1]) - maxlen
-                output_audio = np.pad(output_audio, ((0, 0), (0, residual)), mode="constant")
+                output_audio = np.pad(
+                    output_audio, ((0, 0), (0, residual)), mode="constant"
+                )
 
                 if self.cfg.save_spk:
                     for c_spk in spk2audio.keys():
-                        spk2audio[c_spk] = np.pad(spk2audio[c_spk], ((0, 0), (0, residual)), mode="constant")
+                        spk2audio[c_spk] = np.pad(
+                            spk2audio[c_spk], ((0, 0), (0, residual)), mode="constant"
+                        )
                     if self.cfg.save_anechoic:
                         for c_spk in spk2audio_anechoic.keys():
-                            spk2audio_anechoic[c_spk] = np.pad(spk2audio_anechoic[c_spk], ((0, 0), (0, residual)), mode="constant")
-
+                            spk2audio_anechoic[c_spk] = np.pad(
+                                spk2audio_anechoic[c_spk],
+                                ((0, 0), (0, residual)),
+                                mode="constant",
+                            )
 
             output_audio[:, offset : offset + c_audio.shape[-1]] += c_audio
 
             if self.cfg.save_spk:
                 c_spk = cut.supervisions[0].speaker
                 # save only first channel
-                spk2audio[c_spk][:, offset : offset + c_audio.shape[-1]] += c_audio[0][None, :]
+                spk2audio[c_spk][:, offset : offset + c_audio.shape[-1]] += c_audio[0][
+                    None, :
+                ]
                 if self.cfg.save_anechoic:
                     spk2audio_anechoic[c_spk][
                         :, offset : offset + c_audio_anechoic.shape[-1]
@@ -659,7 +709,7 @@ class ConversationalMeetingSimulator:
         # add some gaussian noise here.
         # if we have noise we can add that too. e.g. wham and sins, qut etc
 
-        noise_prob = getattr(self.cfg, 'noise_probability_global', 1.0)
+        noise_prob = getattr(self.cfg, "noise_probability_global", 1.0)
         if self.cfg.add_noise and np.random.random() < noise_prob:
             min_lvl = min(speech_lvls)
             if self.noise_files is None:
@@ -755,7 +805,11 @@ class ConversationalMeetingSimulator:
                     {"word": alignment} if alignment is not None else None
                 ),  # Include adjusted alignments
                 custom={
-                    "transition_type": transition_types[i].name if transition_types[i] is not None else "FIRST",
+                    "transition_type": (
+                        transition_types[i].name
+                        if transition_types[i] is not None
+                        else "FIRST"
+                    ),
                     "speech_level_db": speech_lvls[i],
                     "original_cut_id": cut.id,
                 },

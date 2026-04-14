@@ -46,7 +46,7 @@ def concatenate_audio_with_crossfade(audio_segments, crossfade_samples=1024):
 
     # Process first segment (no fade in)
     first_seg = audio_segments[0]
-    output[:len(first_seg)] = first_seg
+    output[: len(first_seg)] = first_seg
     current_pos = len(first_seg)
 
     # Create crossfade windows (cosine fade)
@@ -70,15 +70,17 @@ def concatenate_audio_with_crossfade(audio_segments, crossfade_samples=1024):
             output[crossfade_start:current_pos] *= fade_out[:actual_crossfade]
 
             # Fade in the new segment and add
-            output[crossfade_start:current_pos] += seg[:actual_crossfade] * fade_in[:actual_crossfade]
+            output[crossfade_start:current_pos] += (
+                seg[:actual_crossfade] * fade_in[:actual_crossfade]
+            )
 
             # Add the rest of the new segment
             remaining_seg = seg[actual_crossfade:]
-            output[current_pos:current_pos + len(remaining_seg)] = remaining_seg
+            output[current_pos : current_pos + len(remaining_seg)] = remaining_seg
             current_pos += len(remaining_seg)
         else:
             # No crossfade possible
-            output[current_pos:current_pos + len(seg)] = seg
+            output[current_pos : current_pos + len(seg)] = seg
             current_pos += len(seg)
 
     # Trim to actual length used
@@ -312,8 +314,8 @@ def split_monocut_at_pauses(
     # If no splits were made, return original
     if not split_points:
         adjusted_alignments = []
-        supervision =monocut.supervisions[0]
-        for item in supervision.alignment['word']:
+        supervision = monocut.supervisions[0]
+        for item in supervision.alignment["word"]:
             adjusted_item = AlignmentItem(
                 symbol=item.symbol,
                 start=item.start - monocut.start,

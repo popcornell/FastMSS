@@ -103,7 +103,12 @@ class TransitionParams:
 
         # Accumulators
         # [TH, TS, IR, BC]
-        value_bins = {self.IDX_TH: [], self.IDX_TS: [], self.IDX_IR: [], self.IDX_BC: []}
+        value_bins = {
+            self.IDX_TH: [],
+            self.IDX_TS: [],
+            self.IDX_IR: [],
+            self.IDX_BC: [],
+        }
         type_counts = np.zeros(4)
         trans_counts = np.zeros((4, 4))  # Rows=Prev, Cols=Next
 
@@ -158,10 +163,14 @@ class TransitionParams:
 
         # 1. Update Betas (Means)
         # Only update if observed data points to avoid zero-division or NaN
-        if len(value_bins[self.IDX_TH]) > 0: self.beta_th = float(np.mean(value_bins[self.IDX_TH]))
-        if len(value_bins[self.IDX_TS]) > 0: self.beta_ts = float(np.mean(value_bins[self.IDX_TS]))
-        if len(value_bins[self.IDX_IR]) > 0: self.beta_ir = float(np.mean(value_bins[self.IDX_IR]))
-        if len(value_bins[self.IDX_BC]) > 0: self.beta_bc = float(np.mean(value_bins[self.IDX_BC]))
+        if len(value_bins[self.IDX_TH]) > 0:
+            self.beta_th = float(np.mean(value_bins[self.IDX_TH]))
+        if len(value_bins[self.IDX_TS]) > 0:
+            self.beta_ts = float(np.mean(value_bins[self.IDX_TS]))
+        if len(value_bins[self.IDX_IR]) > 0:
+            self.beta_ir = float(np.mean(value_bins[self.IDX_IR]))
+        if len(value_bins[self.IDX_BC]) > 0:
+            self.beta_bc = float(np.mean(value_bins[self.IDX_BC]))
 
         # 2. Update Independent Probabilities (p_ind)
         # Strict normalization: Last element = 1.0 - sum(others)

@@ -16,8 +16,8 @@ import torchaudio
 import torchaudio.functional as F
 from tqdm import tqdm
 
-
 torchaudio.set_audio_backend("soundfile")
+
 
 def resample_file(input_file, output_file, target_sr=16000, overwrite=False):
     """
@@ -57,7 +57,13 @@ def resample_file(input_file, output_file, target_sr=16000, overwrite=False):
         )
 
         # Save resampled audio
-        torchaudio.save(output_file, resampled_waveform, target_sr, bits_per_sample=16,  encoding="PCM_S")
+        torchaudio.save(
+            output_file,
+            resampled_waveform,
+            target_sr,
+            bits_per_sample=16,
+            encoding="PCM_S",
+        )
 
         return True
 
