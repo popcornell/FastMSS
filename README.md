@@ -201,7 +201,7 @@ If you use FastMSS in your research, please cite:
     author    = {Polok, Alexander and Cornell, Samuele and Medennikov, Ivan 
                  and Watanabe, Shinji and {\v{C}}ernock{\'y}, Jan 
                  and Burget, Luk{\'a}{\v{s}}},
-    booktitle = {Proc. Interspeech},
+    booktitle = {Submitted to Interspeech},
     year      = {2026},
 }
 ```
