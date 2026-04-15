@@ -1,6 +1,6 @@
 # FastMSS: Fast Multi-Speaker Simulation
 
-FastMSS is a toolkit for generating realistic multi-speaker meeting scenarios using room impulse response (RIR) simulation and HMM-based turn-taking models. It can dump per-speaker anechoic and reverberant reference signals, making it suitable for training speech separation and enhancement models in addition to speaker-attributed ASR (TS-ASR) and speaker diarization systems.
+FastMSS is a toolkit for generating realistic multi-speaker meeting scenarios using room impulse response (RIR) simulation and HMM-based turn-taking models. It can dump per-speaker anechoic and reverberant reference signals, making it suitable for training speech separation and enhancement models in addition to speaker-attributed ASR and speaker diarization systems.
 
 ## Speed
 
@@ -19,8 +19,7 @@ Generation throughput (simulated hours per minute) as a function of the number o
 - **Noise augmentation** — add real noise (e.g. WHAM, MUSAN) at configurable SNR ranges
 - **Lhotse integration** — reads source speech from lhotse CutSets with word-level alignments; outputs lhotse-compatible manifests
 - **RTTM + NeMo manifests** — optionally generate RTTM files and NeMo-style diarization manifests
-- **Fast** — thread-safe LRU audio cache, vectorized concurrent speaker validation, multiprocessing with per-worker seeding
-
+  
 ## Installation
 
 ```bash
@@ -205,7 +204,3 @@ If you use FastMSS in your research, please cite:
     year      = {2026},
 }
 ```
-
-## License
-
-TBD
