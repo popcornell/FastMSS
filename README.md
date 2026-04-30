@@ -203,9 +203,8 @@ If you use FastMSS in your research, please cite:
 @inproceedings{polok2026mindthegap,
     title     = {Mind the Gap: Impact of Synthetic Conversational Data 
                  on Multi-Talker {ASR} and Speaker Diarization},
-    author    = {Polok, Alexander and Cornell, Samuele and Medennikov, Ivan 
-                 and Watanabe, Shinji and {\v{C}}ernock{\'y}, Jan 
-                 and Burget, Luk{\'a}{\v{s}}},
+    author    = {Polok, Alexander and Medennikov, Ivan and {\v{C}}ernock{\'y}, Jan 
+                 and Watanabe, Shinji and Burget, Luk{\'a}{\v{s}} and Cornell, Samuele},
     booktitle = {Submitted to Interspeech},
     year      = {2026},
 }
