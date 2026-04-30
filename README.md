@@ -200,7 +200,7 @@ python recipes/sim.py \
 If you use FastMSS in your research, please cite:
 
 ```bibtex
-@inproceedings{polok2026mindthegap,
+@misc{polok2026mindthegap,
     title     = {Mind the Gap: Impact of Synthetic Conversational Data 
                  on Multi-Talker {ASR} and Speaker Diarization},
     author    = {Polok, Alexander and Medennikov, Ivan and {\v{C}}ernock{\'y}, Jan 
