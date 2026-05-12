@@ -143,7 +143,18 @@ else
     exit 1
 fi
 
-unzip "${TGT_DIR}/$FINAL_ZIP"
+ORIG_DIR="${TGT_DIR}_original_SR"
+echo "Extracting to ${ORIG_DIR}..."
+mkdir -p "$ORIG_DIR"
+unzip -q "${TGT_DIR}/${FINAL_ZIP}" -d "$ORIG_DIR"
 
-# Cleanup progress file
-rm -f "$PROGRESS_FILE"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "Resampling to 16 kHz at ${TGT_DIR}/..."
+python "${SCRIPT_DIR}/resample_folder.py" "$ORIG_DIR" "$TGT_DIR" \
+    --target_sr 16000 --num_workers 8
+
+# Cleanup intermediate download artifacts (zip + split parts + progress file)
+rm -f "${TGT_DIR}/${FINAL_ZIP}" "${TGT_DIR}"/high_res_wham.zip.?? "$PROGRESS_FILE"
+
+echo "✓ 16 kHz dataset: ${TGT_DIR}/"
+echo "✓ Original sample rate retained at: ${ORIG_DIR}/"
