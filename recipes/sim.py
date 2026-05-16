@@ -30,9 +30,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _simulator: ConversationalMeetingSimulator = None
+_global_spk2cuts = None
 
-
-def _worker_init(cfg, output_dir, all_cuts, rirs, noise_files, base_seed):
+def _worker_init(cfg, output_dir, rirs, noise_files, base_seed):
     worker_seed = base_seed + os.getpid()
     np.random.seed(worker_seed % (2**32))
     random.seed(worker_seed)
@@ -41,11 +41,36 @@ def _worker_init(cfg, output_dir, all_cuts, rirs, noise_files, base_seed):
     _simulator = ConversationalMeetingSimulator(
         cfg,
         Path(output_dir).absolute() / Path("audio"),
-        all_cuts,
+        _global_spk2cuts,
         rirs=rirs,
         noise_files=noise_files,
     )
 
+def _build_spk2cuts(cfg, all_cuts):
+    spk2cuts = {}
+    for cut in all_cuts:
+        if (
+            cut.duration > cfg.max_utt_duration
+            or cut.duration < cfg.min_utt_duration
+        ):
+            continue
+        if not (
+            hasattr(cut.supervisions[0], "alignment")
+            and cut.supervisions[0].alignment
+            and "word" in cut.supervisions[0].alignment
+            and len(cut.supervisions[0].alignment["word"]) > 0
+        ):
+            continue
+        c_spk = cut.supervisions[0].speaker
+        if c_spk not in spk2cuts:
+            spk2cuts[c_spk] = []
+        spk2cuts[c_spk].append(cut)
+
+    for spk in list(spk2cuts.keys()):
+        if len(spk2cuts[spk]) < cfg.min_spk_utt:
+            del spk2cuts[spk]
+
+    return spk2cuts
 
 def _worker_gen_audio(uuid: str):
     """Called per task. Uses the process-local simulator."""
@@ -158,9 +183,9 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------ #
     # Stage 1: Load source CutSet  (-> data_dir)
     # ------------------------------------------------------------------ #
-    if cfg.stage <= 1 and _is_done(Path(data_dir) / "manifests" / ".done"):
+    if cfg.stage <= 1 and _is_done(Path(data_dir) / "manifests" / ".done_stage1"):
         logger.info(
-            "Stage 1 already done (found .done in data_dir/manifests), skipping."
+            "Stage 1 already done (found .done_stage1 in data_dir/manifests), skipping."
         )
     elif cfg.stage <= 1:
         Path(data_dir).mkdir(exist_ok=True, parents=True)
@@ -225,13 +250,15 @@ def main(cfg: DictConfig) -> None:
         logger.info("Saving source CutSet to disk")
         (Path(data_dir) / "manifests").mkdir(exist_ok=True, parents=True)
         all_cuts.to_file(os.path.join(data_dir, "manifests", "all_cuts.jsonl.gz"))
-        _mark_done(Path(data_dir) / "manifests" / ".done")
+        _mark_done(Path(data_dir) / "manifests" / ".done_stage1")
 
     # ------------------------------------------------------------------ #
     # Stage 2: Noise preparation
     # ------------------------------------------------------------------ #
     if cfg.stage <= 2 and cfg.add_noise:
-        if cfg.noise_folders is not None:
+        if _is_done(Path(cfg.output_dir) / "manifests" / ".done_stage2"):
+            logger.info("Stage 2 already done, skipping.")
+        elif cfg.noise_folders is not None:
             logger.info("Parsing background noise files.")
             noise_files = []
             for c_folder in cfg.noise_folders:
@@ -280,13 +307,14 @@ def main(cfg: DictConfig) -> None:
             with open(out_file, "w") as f:
                 f.writelines([str(x) + "\n" for x in noise_files])
             logger.info(f"Noise files paths saved in {out_file}")
+            _mark_done(Path(cfg.output_dir) / "manifests" / ".done_stage2")
 
     # ------------------------------------------------------------------ #
     # Stage 3: RIR simulation  (-> rir_dir)
     # ------------------------------------------------------------------ #
     if cfg.stage <= 3 and cfg.reverberate:
-        if _is_done(Path(rir_dir) / ".done"):
-            logger.info("Stage 3 already done (found .done in rir_dir), skipping.")
+        if _is_done(Path(rir_dir) / ".done_stage3"):
+            logger.info("Stage 3 already done (found .done_stage3 in rir_dir), skipping.")
         else:
             logger.info("Simulating RIRs using Pyroomacoustics")
 
@@ -312,12 +340,12 @@ def main(cfg: DictConfig) -> None:
             out_file = os.path.join(rir_dir, "all_rooms.json")
             with open(out_file, "w") as f:
                 json.dump(all_rooms, f, indent=4)
-            _mark_done(Path(rir_dir) / ".done")
+            _mark_done(Path(rir_dir) / ".done_stage3")
 
     # ------------------------------------------------------------------ #
     # Stage 4: Meeting simulation  (-> output_dir)
     # ------------------------------------------------------------------ #
-    if cfg.stage <= 4 and _is_done(Path(cfg.output_dir) / "manifests" / ".done"):
+    if cfg.stage <= 4 and _is_done(Path(cfg.output_dir) / "manifests" / ".done_stage4"):
         logger.info("Stage 4 already done, skipping.")
     elif cfg.stage <= 4:
         try:
@@ -351,10 +379,16 @@ def main(cfg: DictConfig) -> None:
 
         base_seed = cfg.seed if (hasattr(cfg, "seed") and cfg.seed is not None) else 42
 
+        logger.info("Building spk2cuts in main process...")
+        spk2cuts = _build_spk2cuts(cfg, all_cuts)
+        logger.info(f"Done: {len(spk2cuts)} speakers across {sum(len(v) for v in spk2cuts.values())} cuts.")
+
+        global _global_spk2cuts
+        _global_spk2cuts = spk2cuts  # workers inherit this via fork, read-only is safe
+
         init_args = (
             cfg,
             str(cfg.output_dir),
-            all_cuts,
             rirs,
             noise_files,
             base_seed,
@@ -397,7 +431,7 @@ def main(cfg: DictConfig) -> None:
                 output_dir / f"synth-{cfg.manifest_prefix}-train-cuts.jsonl.gz"
             )
 
-        _mark_done(Path(cfg.output_dir) / "manifests" / ".done")
+        _mark_done(Path(cfg.output_dir) / "manifests" / ".done_stage4")
 
     # ------------------------------------------------------------------ #
     # Stage 5: RTTM + NeMo manifest generation (optional)
@@ -406,7 +440,7 @@ def main(cfg: DictConfig) -> None:
     save_nemo_manifest = cfg.get("save_nemo_manifest", False)
 
     if cfg.stage <= 5 and (save_rttm or save_nemo_manifest):
-        if _is_done(Path(cfg.output_dir) / ".done"):
+        if _is_done(Path(cfg.output_dir) / ".done_stage5"):
             logger.info("Stage 5 already done, skipping.")
         else:
             manifest_dir = Path(cfg.output_dir).absolute() / "manifests"
@@ -566,7 +600,7 @@ def main(cfg: DictConfig) -> None:
                 sys.stdout = old_stdout
             logger.info("Dataset statistics:\n%s", buf.getvalue())
 
-            _mark_done(Path(cfg.output_dir) / ".done")
+            _mark_done(Path(cfg.output_dir) / ".done_stage5")
 
 
 if __name__ == "__main__":

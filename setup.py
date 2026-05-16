@@ -17,5 +17,6 @@ setup(
         "hydra-core",
         "omegaconf",
         "tqdm",
+        "urllib3"
     ],
 )

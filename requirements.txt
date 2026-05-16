@@ -8,3 +8,4 @@ soundfile
 scipy
 numpy
 omegaconf
+urlib3
