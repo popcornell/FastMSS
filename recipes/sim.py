@@ -48,11 +48,16 @@ def _worker_init(cfg, output_dir, rirs, noise_files, base_seed):
 
 def _build_spk2cuts(cfg, all_cuts):
     spk2cuts = {}
+    n_total = 0
+    n_dropped_duration = 0
+    n_dropped_alignment = 0
     for cut in all_cuts:
+        n_total += 1
         if (
             cut.duration > cfg.max_utt_duration
             or cut.duration < cfg.min_utt_duration
         ):
+            n_dropped_duration += 1
             continue
         if not (
             hasattr(cut.supervisions[0], "alignment")
@@ -60,16 +65,30 @@ def _build_spk2cuts(cfg, all_cuts):
             and "word" in cut.supervisions[0].alignment
             and len(cut.supervisions[0].alignment["word"]) > 0
         ):
+            n_dropped_alignment += 1
             continue
         c_spk = cut.supervisions[0].speaker
+        if len({x.speaker for x in cut.supervisions}) != 1:
+            logger.warning(
+                "Skipping cut %s: expected exactly one speaker per cut, got %d.",
+                cut.id, len({x.speaker for x in cut.supervisions}),
+            )
+            continue
         if c_spk not in spk2cuts:
             spk2cuts[c_spk] = []
         spk2cuts[c_spk].append(cut)
 
+    n_before_min_utt = sum(len(v) for v in spk2cuts.values())
+    n_spk_before = len(spk2cuts)
     for spk in list(spk2cuts.keys()):
         if len(spk2cuts[spk]) < cfg.min_spk_utt:
             del spk2cuts[spk]
-
+    logger.info(
+        f"_build_spk2cuts: {n_total} input cuts -> "
+        f"dropped {n_dropped_duration} by duration, "
+        f"{n_dropped_alignment} for missing alignment; "
+        f"{n_spk_before} speakers -> {len(spk2cuts)} after min_spk_utt filter."
+    )
     return spk2cuts
 
 def _worker_gen_audio(uuid: str):
