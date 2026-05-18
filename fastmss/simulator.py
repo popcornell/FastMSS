@@ -45,7 +45,7 @@ class ConversationalMeetingSimulator:
         self,
         cfg,
         output_dir,
-        all_cuts,
+        spk2cuts,
         rirs=None,
         noise_files=None,
     ):
@@ -68,43 +68,6 @@ class ConversationalMeetingSimulator:
 
         if cfg.boost_overlap_factor is not None:
             self.hmm_params.boost_overlap_factor(cfg.boost_overlap_factor)
-
-        # map speakers to cuts
-        logger.info("Filtering source Cuts: removing too short or too long.")
-        prev_len = len(all_cuts)
-        after_len = 0
-        spk2cuts = {}
-        for cut in all_cuts:
-            if (
-                cut.duration > self.cfg.max_utt_duration
-                or cut.duration < self.cfg.min_utt_duration
-            ):
-                continue
-            # Alignment filtering: skip cuts without word-level alignments
-            if not (
-                hasattr(cut.supervisions[0], "alignment")
-                and cut.supervisions[0].alignment
-                and "word" in cut.supervisions[0].alignment
-                and len(cut.supervisions[0].alignment["word"]) > 0
-            ):
-                continue
-            c_spk = cut.supervisions[0].speaker
-            assert (
-                len(set([x.speaker for x in cut.supervisions])) == 1
-            ), "Input cuts should contain only one speaker. Yours do not."
-            if c_spk not in spk2cuts.keys():
-                spk2cuts[c_spk] = []
-            spk2cuts[c_spk].append(cut)
-            after_len += 1
-        logger.info("Filtering complete.")
-        logger.info(f"Before {prev_len}, now {after_len} cuts.")
-
-        logger.info("Removing speakers with too few utterances.")
-        prev_spk = len(spk2cuts.keys())
-        for spk in list(spk2cuts.keys()):
-            if len(spk2cuts[spk]) < self.cfg.min_spk_utt:
-                del spk2cuts[spk]
-        logger.info(f"Before {prev_spk}, now {len(spk2cuts.keys())} speakers.")
 
         self.spk2cuts = spk2cuts
         self.speakers = list(spk2cuts.keys())
