@@ -8,7 +8,7 @@ import re
 import sys
 from collections import defaultdict
 from functools import partial
-from multiprocessing import Pool
+import multiprocessing as mp
 from pathlib import Path
 
 import hydra
@@ -30,6 +30,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _simulator: ConversationalMeetingSimulator = None
+
+# Set in main() before the worker Pool is forked. Worker processes inherit
+# this read-only via copy-on-write so we don't have to pickle a large dict
+# through Pool initargs (which was the cause of the hang on many CPUs).
+# REQUIRES the 'fork' start method — see the guard in stage 4.
 _global_spk2cuts = None
 
 def _worker_init(cfg, output_dir, rirs, noise_files, base_seed):
@@ -402,6 +407,9 @@ def main(cfg: DictConfig) -> None:
         spk2cuts = _build_spk2cuts(cfg, all_cuts)
         logger.info(f"Done: {len(spk2cuts)} speakers across {sum(len(v) for v in spk2cuts.values())} cuts.")
 
+        if mp.get_start_method(allow_none=True) not in (None, "fork"):
+            raise RuntimeError("Stage 4 requires the 'fork' multiprocessing start method so workers inherit _global_spk2cuts without pickling.")
+
         global _global_spk2cuts
         _global_spk2cuts = spk2cuts  # workers inherit this via fork, read-only is safe
 
@@ -416,24 +424,15 @@ def main(cfg: DictConfig) -> None:
         recordings = []
         supervisions = []
 
-        with Pool(
-            processes=cfg.n_jobs,
-            initializer=_worker_init,
-            initargs=init_args,
-        ) as pool:
-            for c_rec, c_sup in tqdm(
-                pool.imap_unordered(_worker_gen_audio, uuids),
-                total=cfg.n_meetings,
-                desc="Simulating meetings",
-            ):
-                recordings.append(c_rec)
-                supervisions.extend(c_sup)
-
+        ctx = mp.get_context("fork")  # fork is required so workers inherit _global_spk2cuts
+        with ctx.Pool(processes=cfg.n_jobs, initializer=_worker_init, initargs=init_args) as pool:
+             for c_rec, c_sup in tqdm(pool.imap_unordered(_worker_gen_audio, uuids), total=cfg.n_meetings, desc="Simulating meetings"):
+                 recordings.append(c_rec)
+                 supervisions.extend(c_sup)
+                 
         supervisions = SupervisionSet(supervisions)
         recordings = RecordingSet(recordings)
-        lhotse.validate_recordings_and_supervisions(
-            recordings=recordings, supervisions=supervisions
-        )
+        lhotse.validate_recordings_and_supervisions(recordings=recordings, supervisions=supervisions)
         logger.info(f"Saving simulated manifests to {output_dir}.")
         supervisions.to_file(
             output_dir / f"synth-{cfg.manifest_prefix}-train-supervisions.jsonl.gz"
