@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from fastmss.rirsimulator import RIRSimulator
 from fastmss.simulator import ConversationalMeetingSimulator
-from fastmss.utils import split_monocuts_batch
+from fastmss.utils import split_monocuts_to_manifest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -165,6 +165,10 @@ def main(cfg: DictConfig) -> None:
         logger.info("Stage 1 already done (found .done in data_dir/manifests), skipping.")
     elif cfg.stage <= 1:
         Path(data_dir).mkdir(exist_ok=True, parents=True)
+        manifest_dir = Path(data_dir) / "manifests"
+        manifest_dir.mkdir(exist_ok=True, parents=True)
+        all_cuts_path = manifest_dir / "all_cuts.jsonl.gz"
+
         all_cuts = []
         for split in cfg.dset_splits:
             c_cut = CutSet.from_file(Path(cfg.manifest_dir)
@@ -173,33 +177,53 @@ def main(cfg: DictConfig) -> None:
         all_cuts = combine_manifests(all_cuts)
 
         exclude = set(str(s) for s in (cfg.get("exclude_speakers") or []))
-        if exclude:
-            all_cuts = all_cuts.to_eager()
-            before = len(all_cuts)
-            all_cuts = all_cuts.filter(
-                lambda cut: all(
-                    str(s.speaker) not in exclude for s in cut.supervisions
-                )
-            ).to_eager()
+
+        if (
+            hasattr(cfg, "split_fa_factor")
+            and cfg.split_fa_factor is not None
+            and cfg.split_fa_factor > 0
+        ):
             logger.info(
-                f"Excluded speakers {exclude}: {before} -> {len(all_cuts)} cuts"
+                "Streaming source CutSet through "
+                f"{cfg.n_jobs} forced-alignment workers"
+            )
+            before, retained, after = split_monocuts_to_manifest(
+                all_cuts,
+                output_path=all_cuts_path,
+                pause_threshold=cfg.split_fa_factor,
+                num_jobs=cfg.n_jobs,
+                exclude_speakers=exclude,
             )
 
-        if hasattr(cfg, "split_fa_factor") and cfg.split_fa_factor is not None and cfg.split_fa_factor > 0:
-            all_cuts = all_cuts.to_eager()
-            before = len(all_cuts)
-            all_cuts = split_monocuts_batch(
-                all_cuts, cfg.split_fa_factor, num_jobs=cfg.n_jobs,
-            )
+            if exclude:
+                logger.info(
+                    f"Excluded speakers {exclude}: {before} -> {retained} cuts"
+                )
             logger.info(
                 f"Split cuts at pauses > {cfg.split_fa_factor}s: "
-                f"{before} -> {len(all_cuts)} cuts"
+                f"{retained} -> {after} cuts"
             )
+        else:
+            before = len(all_cuts)
+            retained = 0
+            logger.info("Saving source CutSet to disk")
+            with CutSet.open_writer(all_cuts_path, overwrite=True) as writer:
+                for cut in all_cuts:
+                    if exclude and any(
+                        str(supervision.speaker) in exclude
+                        for supervision in cut.supervisions
+                    ):
+                        continue
+                    writer.write(cut)
+                    retained += 1
 
-        logger.info("Saving source CutSet to disk")
-        (Path(data_dir) / "manifests").mkdir(exist_ok=True, parents=True)
-        all_cuts.to_file(os.path.join(data_dir, "manifests", "all_cuts.jsonl.gz"))
-        _mark_done(Path(data_dir) / "manifests" / ".done")
+            if exclude:
+                logger.info(
+                    f"Excluded speakers {exclude}: {before} -> {retained} cuts"
+                )
+
+        all_cuts = CutSet.from_file(all_cuts_path)
+        _mark_done(manifest_dir / ".done")
 
     if cfg.stage <= 2 and cfg.add_noise:
         if cfg.noise_folders is not None:

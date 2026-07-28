@@ -1,10 +1,16 @@
 import logging
+import os
+import shutil
 from functools import partial
-from typing import Any, Dict, List, Optional, Tuple, Union
+from multiprocessing import Pool
+from multiprocessing.util import Finalize
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import lhotse
 import numpy as np
-from lhotse import MonoCut, Recording
+from lhotse import CutSet, MonoCut, Recording
 from lhotse.parallel import parallel_map
 from lhotse.supervision import AlignmentItem, SupervisionSegment
 from tqdm import tqdm
@@ -14,6 +20,11 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+_split_manifest_writer = None
+_split_manifest_writer_finalizer = None
+_split_pause_threshold = None
+_split_exclude_speakers = set()
 
 
 def concatenate_audio_with_crossfade(audio_segments, crossfade_samples=1024):
@@ -420,3 +431,125 @@ def split_monocuts_batch(
     ):
         result.extend(elem)
     return lhotse.CutSet(result)
+
+
+def _init_split_manifest_worker(
+    shard_dir, manifest_suffix, pause_threshold, exclude_speakers
+):
+    """Initialize one persistent output shard per worker process."""
+    global _split_manifest_writer
+    global _split_manifest_writer_finalizer
+    global _split_pause_threshold
+    global _split_exclude_speakers
+
+    shard_path = Path(shard_dir) / f"cuts.{os.getpid()}{manifest_suffix}"
+    _split_manifest_writer = CutSet.open_writer(shard_path, overwrite=True)
+    _split_manifest_writer.__enter__()
+    _split_manifest_writer_finalizer = Finalize(
+        _split_manifest_writer,
+        _split_manifest_writer.close,
+        exitpriority=10,
+    )
+    _split_pause_threshold = pause_threshold
+    _split_exclude_speakers = set(exclude_speakers)
+
+
+def _split_monocut_to_worker_shard(cut):
+    """Filter and split one cut, writing results to this worker's shard."""
+    if _split_exclude_speakers and any(
+        str(supervision.speaker) in _split_exclude_speakers
+        for supervision in cut.supervisions
+    ):
+        return 1, 0, 0
+
+    output_count = 0
+    for split_cut in split_monocut_at_pauses(
+        cut, pause_threshold=_split_pause_threshold
+    ):
+        _split_manifest_writer.write(split_cut)
+        output_count += 1
+
+    return 1, 1, output_count
+
+
+def split_monocuts_to_manifest(
+    monocuts: CutSet,
+    output_path: Union[str, Path],
+    pause_threshold: float = 0.2,
+    num_jobs: int = 1,
+    exclude_speakers: Optional[Iterable[str]] = None,
+) -> Tuple[int, int, int]:
+    """
+    Split a CutSet in parallel using one output shard per worker.
+
+    The source CutSet is read lazily once. Each worker serializes and compresses
+    its split cuts into a private gzip shard. Once all workers finish, the shards
+    are concatenated byte-for-byte into the final manifest. Concatenated gzip
+    members are valid gzip and are read transparently by Python and Lhotse.
+
+    Returns:
+        A tuple containing the source cut count, retained source cut count after
+        speaker exclusion, and output split-cut count.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    num_jobs = max(1, int(num_jobs))
+    exclude_speakers = tuple(str(speaker) for speaker in (exclude_speakers or []))
+    manifest_suffix = "".join(output_path.suffixes) or ".jsonl.gz"
+
+    source_count = 0
+    retained_count = 0
+    output_count = 0
+    with TemporaryDirectory(
+        prefix=".split_fa_shards_", dir=output_path.parent
+    ) as shard_dir:
+        pool = Pool(
+            processes=num_jobs,
+            initializer=_init_split_manifest_worker,
+            initargs=(
+                shard_dir,
+                manifest_suffix,
+                pause_threshold,
+                exclude_speakers,
+            ),
+        )
+        try:
+            results = pool.imap_unordered(
+                _split_monocut_to_worker_shard,
+                monocuts,
+                chunksize=16,
+            )
+            for source_delta, retained_delta, output_delta in tqdm(
+                results, desc="Splitting cuts using forced alignment"
+            ):
+                source_count += source_delta
+                retained_count += retained_delta
+                output_count += output_delta
+            pool.close()
+            pool.join()
+        except BaseException:
+            pool.terminate()
+            pool.join()
+            raise
+
+        if source_count == 0:
+            raise ValueError("Cannot split an empty CutSet.")
+        if output_count == 0:
+            raise RuntimeError("Forced-alignment splitting produced no cuts.")
+
+        shard_paths = sorted(Path(shard_dir).glob(f"cuts.*{manifest_suffix}"))
+        if not shard_paths:
+            raise RuntimeError("Workers produced no output shards.")
+
+        copy_buffer_size = 16 * 1024 * 1024
+        with open(output_path, "wb", buffering=copy_buffer_size) as output_file:
+            for shard_path in shard_paths:
+                with open(
+                    shard_path, "rb", buffering=copy_buffer_size
+                ) as shard_file:
+                    shutil.copyfileobj(
+                        shard_file, output_file, length=copy_buffer_size
+                    )
+
+    return source_count, retained_count, output_count
