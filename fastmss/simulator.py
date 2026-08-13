@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Optional
@@ -92,6 +93,20 @@ class ConversationalMeetingSimulator:
         self.spk2cuts = spk2cuts
         self.speakers = list(spk2cuts.keys())
 
+        # optionally keep the original reading order of the source material
+        # (e.g. LibriVox chapters in LibriSpeech), so that a speaker in the
+        # simulated meeting utters consecutive, semantically coherent sentences.
+        self.utt_sampling = getattr(self.cfg, "utt_sampling", "random")
+        assert self.utt_sampling in (
+            "random",
+            "sequential",
+        ), f"Unknown utt_sampling: {self.utt_sampling}"
+        if self.utt_sampling == "sequential":
+            self.order_id_pattern = getattr(self.cfg, "order_id_pattern", None)
+            self.order_random_start = getattr(self.cfg, "order_random_start", True)
+            self.order_min_group_utt = getattr(self.cfg, "order_min_group_utt", 2)
+            self.spk2groups = self.build_ordered_groups(spk2cuts)
+
         # Validate Markov matrix
         if self.cfg.use_markov:
             row_sums = np.sum(self.hmm_params.p_markov, axis=1)
@@ -101,6 +116,102 @@ class ConversationalMeetingSimulator:
                 self.hmm_params.p_markov = self.hmm_params.p_markov / (
                     row_sums[:, None] + 1e-8
                 )
+
+    def source_order_key(self, cut):
+        """
+        Locate a cut in the original source material.
+
+        Returns a (group, position) tuple, where group identifies a contiguous
+        piece of source material (a LibriVox chapter for LibriSpeech, a session
+        for meeting corpora) and position orders the cuts inside that group.
+
+        If cfg.order_id_pattern is set, it is matched against the supervision id.
+        The pattern must define a named group "group"; all the other named groups
+        are read as integers and used, in alphabetical order of their names, as
+        the position. Otherwise cuts are grouped per recording and ordered by
+        their offset in it.
+        """
+        sup = cut.supervisions[0]
+        if self.order_id_pattern is not None:
+            match = re.match(self.order_id_pattern, str(sup.id))
+            if match is not None:
+                fields = match.groupdict()
+                group = fields.pop("group")
+                position = tuple(
+                    int(fields[name]) if fields[name] is not None else -1
+                    for name in sorted(fields.keys())
+                )
+                return group, position + (cut.start,)
+        return cut.recording_id, (cut.start,)
+
+    def build_ordered_groups(self, spk2cuts):
+        """Per speaker, list of source groups, each with its cuts in original order."""
+        logger.info("Grouping source cuts by their original order.")
+        spk2groups = {}
+        n_groups, n_dropped = 0, 0
+        for spk, cuts in spk2cuts.items():
+            groups = {}
+            for cut in cuts:
+                group, position = self.source_order_key(cut)
+                groups.setdefault(group, []).append((position, cut))
+
+            ordered = []
+            for group in sorted(groups.keys()):
+                items = sorted(groups[group], key=lambda x: x[0])
+                if len(items) < self.order_min_group_utt:
+                    n_dropped += len(items)
+                    continue
+                ordered.append([cut for _, cut in items])
+
+            if not ordered:
+                # keep the speaker with its longest group rather than dropping it
+                largest = max(groups.values(), key=len)
+                n_dropped -= len(largest)
+                ordered = [[cut for _, cut in sorted(largest, key=lambda x: x[0])]]
+
+            spk2groups[spk] = ordered
+            n_groups += len(ordered)
+        logger.info(
+            f"Grouped cuts of {len(spk2groups)} speakers into {n_groups} groups "
+            f"({n_dropped} cuts dropped, groups shorter than {self.order_min_group_utt} utterances)."
+        )
+        return spk2groups
+
+    def init_speaker_cursor(self, speaker, random_start=True, used=()):
+        """
+        Pick a source group for a speaker; longer groups are picked more often.
+        Groups already used in the current meeting are avoided if possible, so
+        that a speaker does not repeat material it has already uttered.
+        """
+        groups = self.spk2groups[speaker]
+        weights = np.array([len(g) for g in groups], dtype=float)
+        if len(used) < len(groups):
+            weights[list(used)] = 0.0
+        weights /= weights.sum()
+        group_idx = int(np.random.choice(len(groups), p=weights))
+        position = (
+            int(np.random.randint(0, len(groups[group_idx]))) if random_start else 0
+        )
+        return {"group": group_idx, "position": position, "used": set(used) | {group_idx}}
+
+    def next_ordered_cut(self, speaker, cursors):
+        """Next cut of a speaker, following the order of the original material."""
+        if speaker not in cursors:
+            cursors[speaker] = self.init_speaker_cursor(speaker)
+
+        cursor = cursors[speaker]
+        group = self.spk2groups[speaker][cursor["group"]]
+        if cursor["position"] >= len(group):
+            # group exhausted, continue from the beginning of another one
+            cursor = self.init_speaker_cursor(
+                speaker, random_start=False, used=cursor["used"]
+            )
+            cursors[speaker] = cursor
+            group = self.spk2groups[speaker][cursor["group"]]
+
+        cut = group[cursor["position"]]
+        cursor["position"] += 1
+        return cut
 
     def sample_exponential_duration(self, beta: float) -> float:
         """Sample duration from exponential distribution"""
@@ -498,6 +609,7 @@ class ConversationalMeetingSimulator:
         utterances = []
         offsets = []
         transition_types = []
+        spk_cursors = {}  # per-meeting reading position, sequential sampling only
 
         # this is tuned to librispeech
 
@@ -528,7 +640,10 @@ class ConversationalMeetingSimulator:
                 else:
                     current_speaker = np.random.choice(sampled_spk)
 
-            cut = np.random.choice(self.spk2cuts[current_speaker])
+            if self.utt_sampling == "sequential":
+                cut = self.next_ordered_cut(current_speaker, spk_cursors)
+            else:
+                cut = np.random.choice(self.spk2cuts[current_speaker])
 
             # Load audio # optionally perturb speed here ? I think it is faster with torchaudio.
             if self.cfg.speed_perturb:
