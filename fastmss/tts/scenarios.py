@@ -188,10 +188,18 @@ def sample_scenario(convo_type: str, seed: int) -> dict[str, str]:
     return out
 
 
+# Only random_convo is drawn by default. The structured types below are kept
+# because they are written and cheap to keep, but they have not been checked for
+# stage directions, ordinary stakes, or speaker-id leaks the way random_convo
+# has -- and doctor_patient in particular needs its own judgement about what
+# counts as melodrama, since "afraid it's serious" is an ordinary thing for a
+# patient to be. Add weight here once a type has been looked at.
+DEFAULT_WEIGHTS = {"random_convo": 1.0}
+
+
 def pick_type(seed: int, weights: dict[str, float] | None = None) -> str:
     """Weighted draw over ConvoTypes, on its own stream."""
-    weights = weights or {"random_convo": 0.5, "workplace_meeting": 0.25,
-                          "customer_support": 0.15, "doctor_patient": 0.10}
+    weights = weights or DEFAULT_WEIGHTS
     names = sorted(weights)
     total = sum(weights[n] for n in names)
     h = hashlib.sha256(f"convotype|{seed}".encode()).digest()
