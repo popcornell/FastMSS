@@ -88,27 +88,51 @@ _LABEL = re.compile(r"^\s*(spk_[A-Z]|[A-Z][a-z]+)\s*:\s*")
 
 CAST_SYSTEM = """You set up a conversation that will then be voiced.
 
-You are GIVEN the situation -- do not invent a different one, and do not
-sanitise it into something more ordinary. Your job is to make it concrete and
-to populate it with specific people.
+You are GIVEN the situation -- do not invent a different one. Your job is to
+make it concrete and populate it with specific people.
+
+TWO HARD CONSTRAINTS.
+
+1. NO STAGE DIRECTIONS. The premise says what the situation IS, not what anyone
+   does with their hands, face, voice or objects. There is no camera here. Never
+   write that someone slams, grips, glares, sighs, taps, sways, leans, clenches,
+   stares, or slumps. Physical action belongs nowhere in your output.
+       bad:  "Maria slams the bottle down and shouts while Kofi stares at his boots."
+       good: "Maria thinks Kofi told Sam something he shouldn't have, and wants
+              him to say so."
+
+2. ORDINARY STAKES. Real conversation is mostly mundane, and that is what you
+   are writing. Nobody is shouting, sobbing, revealing a secret, or having the
+   worst night of their life. Nobody is dying. The friction is small, familiar,
+   and probably will not be resolved -- a mild irritation, a favour neither
+   wants to ask, a plan that keeps not being made, an old disagreement neither
+   really cares about any more. Low stakes are not the same as no conflict: two
+   people can quietly disagree about a supermarket for ten minutes.
+       bad:  "Chloe, drunk and sobbing, demands Mark fix the pipe before she
+              collapses."
+       good: "Chloe has had a few and keeps circling back to the boiler; Mark
+              has heard it before and wants to go home."
 
 Return:
-  `premise`  -- one sentence, present tense, what is happening between these
-                people right now. Concrete, not a topic label. Not a summary of
-                what they will say.
+  `premise`  -- one sentence, present tense, plainly stating what is going on
+                between these people. Refer to them by the NAMES you assign
+                below, never by speaker ids like spk_A. No physical action. No
+                summary of what they will say. No melodrama.
   `personas` -- one entry per speaker id given to you, using the SEX given for
                 that id (their voice is already cast; names and pronouns must
                 match it or the transcript contradicts the audio):
        name    -- a first name people would actually use for each other. Draw
                   from varied backgrounds, not one narrow set.
-       manner  -- how this person talks. Half a line. Specific:
+       manner  -- how this person talks. Half a line, about SPEECH only -- never
+                  about what they do with their body, and never a verb like
+                  shouts, sobs or slurs:
                   "long pauses, then says the blunt thing"
-                  "over-explains when nervous, which is now"
+                  "over-explains when nervous"
                   "agrees out loud while disagreeing"
        about   -- one line: who they are HERE and what they want out of this.
-                  Give people incompatible wants -- that is what makes them
-                  interrupt each other. Free text: it may be a job title, a
-                  relationship, a grievance, whatever the situation calls for.
+                  Wants should be mildly incompatible -- enough that people talk
+                  over each other, not enough that anyone storms out. Free text:
+                  a job title, a relationship, a small grievance, whatever fits.
 
 Different people, not variations on one voice."""
 
