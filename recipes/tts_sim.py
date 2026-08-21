@@ -16,15 +16,12 @@ from lhotse import RecordingSet, SupervisionSet
 
 from fastmss.hmm_turn_taking import TransitionParams
 from fastmss.tts.backends import get_backend
-from fastmss.tts.fill import fill
+from fastmss.tts.fill import cast, fill
 from fastmss.tts.plan import build_plan
 from fastmss.tts.simulator import TTSMeetingSimulator
 from fastmss.tts.refbank import build_bank, cast_meeting
+from fastmss.tts.scenarios import pick_type, sample_scenario
 from fastmss.tts.skeleton import sample_skeleton
-
-ROLES = ["project manager", "user-interface designer", "industrial designer",
-         "marketing expert", "software lead", "QA engineer"]
-TOPIC = "a design review for a new remote control"
 
 
 def default_cfg(**over):
@@ -61,6 +58,8 @@ def main():
     ap.add_argument("--model", default="qwen3:30b-a3b")
     ap.add_argument("--base-url", default="http://127.0.0.1:11434/v1")
     ap.add_argument("--no-llm", action="store_true", help="stub fill, no LLM")
+    ap.add_argument("--convo-type", default=None,
+                    help="force a ConvoType (default: weighted draw)")
     ap.add_argument("--reverberate", action="store_true")
     ap.add_argument("--add-noise", action="store_true")
     ap.add_argument("--noise-folder", default=None)
@@ -112,22 +111,33 @@ def main():
             ev[s["event"]] = ev.get(s["event"], 0) + 1
         print(f"  skeleton: {len(skel['slots'])} slots, {ev}")
 
-        # voice-first: draw voices + sex composition, THEN assign roles
-        personas = cast_meeting(bank, a.speakers, seed=a.seed + i)
-        for j, (spk, pdat) in enumerate(personas.items()):
-            pdat["role"] = ROLES[j % len(ROLES)]
-        print("  cast: " + ", ".join(
-            f"{k}=LS{v['ls_id']}({v['sex']})" for k, v in personas.items()))
+        # voice-first: voices and sexes are drawn before anyone writes a persona
+        voices = cast_meeting(bank, a.speakers, seed=a.seed + i)
+        print("  voices: " + ", ".join(
+            f"{k}=LS{v['ls_id']}({v['sex']})" for k, v in voices.items()))
+        ctype = a.convo_type or pick_type(a.seed + i)
+        scen = sample_scenario(ctype, a.seed + i)
+        print(f"  scenario [{ctype}]: " + " | ".join(scen.values()))
         if a.no_llm:
+            premise = f"a {ctype.replace('_', ' ')}"
+            people = {k: {"name": k, "manner": "flat", "about": "test"}
+                      for k in voices}
             dialogue = {s["uid"]: {"text": "mm-hm" if s["event"] == "backchannel"
-                                  else f"this is slot {s['uid']} for the {TOPIC}",
-                                  "style": "neutral",
+                                  else f"this is slot {s['uid']}",
+                                  "instruct": "Speak naturally.",
                                   "level": "soft" if s["event"] == "backchannel" else "normal"}
                         for s in skel["slots"]}
         else:
-            roles = {k: f"{v['role']} ({'man' if v['sex'] == 'M' else 'woman'})"
-                     for k, v in personas.items()}
-            dialogue = fill(skel, roles, base_url=a.base_url, model=a.model)
+            sexes = {k: v["sex"] for k, v in voices.items()}
+            c = cast(ctype, scen, sexes, base_url=a.base_url, model=a.model)
+            premise, people = c["premise"], c["personas"]
+            print(f"  premise: {premise}")
+            for k, v in people.items():
+                print(f"    {k} {v['name']}: {v['about']} [{v['manner']}]")
+            dialogue = fill(skel, people, premise=premise,
+                            base_url=a.base_url, model=a.model)
+
+        personas = {k: {**voices[k], **people.get(k, {})} for k in voices}
 
         records = build_plan(skel, dialogue, backend, personas,
                              out_dir=str(out / "clips_final" / mid))
@@ -135,7 +145,9 @@ def main():
         recs.append(rec)
         all_sups.extend(sups)
 
-        json.dump({"skeleton": skel, "dialogue": dialogue,
+        json.dump({"convo_type": ctype, "scenario": scen,
+                   "premise": premise, "personas": personas,
+                   "skeleton": skel, "dialogue": dialogue,
                    "records": [{k: v for k, v in r.items()} for r in records]},
                   open(out / "manifests" / f"{mid}_realized.json", "w"), indent=1)
         print(f"  audio: {rec.duration:.1f}s -> {out/'audio'/(mid+'.wav')}")

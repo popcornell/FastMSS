@@ -17,21 +17,9 @@ import soundfile as sf
 
 CACHE_VERSION = 1
 
-# style -> (natural-language instruction, gain dB).
-# `speed` is deliberately absent: it is post-hoc mel interpolation and artefacts
-# audibly even at 0.92. Rate differences live in the INSTRUCTION, which changes
-# the generated tokens instead of resampling them.
-COSY_STYLES = {
-    "neutral":        ("Speak naturally, as in a relaxed work meeting.", 0.0),
-    "engaged":        ("Speak with interest and energy, leaning into the point.", 0.5),
-    "hesitant":       ("Speak hesitantly, unsure, with halting delivery.", -1.5),
-    "urgent":         ("Speak quickly and urgently, cutting in.", 1.5),
-    "insistent":      ("Speak firmly and insistently, pressing the point.", 1.5),
-    "low_arousal":    ("Murmur quietly and briefly, barely engaged.", -6.0),
-    "affirmative":    ("Murmur a short quiet agreement.", -5.0),
-    "mildly_annoyed": ("Speak with slight irritation, clipped.", 0.5),
-    "patient":        ("Speak calmly and patiently, unhurried.", -0.5),
-}
+# No style table. CosyVoice 3's style channel is natural language, so the
+# per-utterance instruction comes straight from the LLM. `speed` stays pinned at
+# 1.0: it is post-hoc mel interpolation and artefacts audibly even at 0.92.
 # vocal effort is a generative property, not just amplitude: it goes into the
 # instruction AND into a gain sampled from the level's range.
 LEVELS = {
@@ -96,15 +84,23 @@ class CosyVoiceBackend:
             if line.startswith("{") and line.endswith("}"):
                 return line
 
-    def synth(self, text, style, level, speaker, persona) -> tuple[np.ndarray, str]:
-        """persona must carry `path`: the speaker's LibriSpeech reference clip."""
+    def synth(self, text, instruct, level, speaker, persona) -> tuple[np.ndarray, str]:
+        """persona must carry `path`: the speaker's LibriSpeech reference clip.
+
+        Speaker identity is the reference clip. `zero_shot_spk_id` is NOT used:
+        frontend_instruct2 routes instruct_text through the prompt_text slot, and
+        the registered-speaker branch replaces the whole cached input, so an id
+        would silently discard the instruction. The worker memoises the
+        prompt-derived features by clip path instead, which is the same saving.
+        """
         ref = persona.get("path")
         if not ref or not os.path.exists(ref):
             raise RuntimeError(f"no reference clip for {speaker}: {ref!r}")
-        instruct, style_db = COSY_STYLES.get(style, COSY_STYLES["neutral"])
+        instruct = (instruct or "").strip() or "Speak naturally."
         effort = LEVELS.get(level, LEVELS["normal"])[2]
         if effort:
             instruct = f"{instruct.rstrip('.')}, {effort}."
+        style_db = 0.0
 
         key = "|".join([str(CACHE_VERSION), self.name, text, instruct, ref])
         h = hashlib.sha1(key.encode()).hexdigest()[:16]

@@ -68,7 +68,7 @@ def build_plan(skeleton, dialogue, backend, personas, out_dir="clips_final",
     for slot in skeleton["slots"]:
         uid = slot["uid"]
         e = dialogue[uid]
-        wav, src = backend.synth(e["text"], e["style"], e["level"],
+        wav, src = backend.synth(e["text"], e["instruct"], e["level"],
                                  slot["speaker"], personas.get(slot["speaker"], {}))
         dur = len(wav) / sr
         checks: list[str] = []
@@ -89,7 +89,7 @@ def build_plan(skeleton, dialogue, backend, personas, out_dir="clips_final",
                 wav = (wav * sc).astype("float32")
                 checks.append(f"backchannel rescaled {20*np.log10(sc):+.1f} dB")
             rec = dict(uid=uid, speaker=slot["speaker"], event="backchannel",
-                       onset=onset, dur=dur, wav=wav, style=e["style"],
+                       onset=onset, dur=dur, wav=wav, instruct=e["instruct"],
                        level=e["level"], text=e["text"], src=src, checks=checks)
             placed[uid] = rec
             records.append(rec)
@@ -147,7 +147,7 @@ def build_plan(skeleton, dialogue, backend, personas, out_dir="clips_final",
             checks.append(f"duration {dur:.2f}s vs planned {slot['planned_dur']:.2f}s")
 
         rec = dict(uid=uid, speaker=slot["speaker"], event=slot["event"],
-                   onset=onset, dur=dur, wav=wav, style=e["style"],
+                   onset=onset, dur=dur, wav=wav, instruct=e["instruct"],
                    level=e["level"], text=e["text"], src=src, checks=checks,
                    lombard_db=rec_lomb)
         placed[uid] = rec

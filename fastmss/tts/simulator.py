@@ -143,7 +143,7 @@ class TTSMeetingSimulator(ConversationalMeetingSimulator):
                 channel=0, speaker=r["speaker"], text=r["text"], language="English",
                 custom={"transition_type": r["event"].upper(),
                         "speech_level_db": round(lvl, 2),
-                        "style": r["style"], "level": r["level"],
+                        "instruct": r["instruct"], "level": r["level"],
                         "lombard_db": round(r.get("lombard_db", 0.0), 2),
                         "checks": r["checks"]}))
         return recording, sups
