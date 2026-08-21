@@ -120,12 +120,18 @@ Return:
                 summary of what they will say. No melodrama.
   `personas` -- one entry per speaker id given to you, using the SEX given for
                 that id (their voice is already cast; names and pronouns must
-                match it or the transcript contradicts the audio):
+                match it or the transcript contradicts the audio), and FITTING
+                the turn-taking profile given for that id:
        name    -- a first name people would actually use for each other. Draw
                   from varied backgrounds, not one narrow set.
        manner  -- how this person talks. Half a line, about SPEECH only -- never
                   about what they do with their body, and never a verb like
-                  shouts, sobs or slurs:
+                  shouts, sobs or slurs. It must be CONSISTENT with that
+                  speaker's profile: whoever holds the long turns is the one who
+                  explains at length or tells the story; whoever cuts in
+                  repeatedly is impatient or contradicts on reflex; whoever
+                  mostly listens is the quiet one. Do not give a terse manner to
+                  the speaker with the longest turns.
                   "long pauses, then says the blunt thing"
                   "over-explains when nervous"
                   "agrees out loud while disagreeing"
@@ -151,7 +157,8 @@ def _cast_schema(speakers):
         "required": ["premise", "personas"], "additionalProperties": False}
 
 
-def cast(convo_type, scenario, sexes, base_url="http://127.0.0.1:11434/v1",
+def cast(convo_type, scenario, sexes, timing="",
+         base_url="http://127.0.0.1:11434/v1",
          model="qwen3:30b-a3b", max_retries=2):
     """Turn a sampled scenario into a premise and one persona per speaker.
 
@@ -161,8 +168,10 @@ def cast(convo_type, scenario, sexes, base_url="http://127.0.0.1:11434/v1",
     spec = "\n".join(f"  {k}: {v}" for k, v in scenario.items())
     who = ", ".join(f"{s} is {'male' if x == 'M' else 'female'}"
                     for s, x in sexes.items())
+    tprof = f"\n\nHow the talking is already distributed (fixed, not yours to "
+    tprof += f"change -- write people who fit it):\n{timing}" if timing else ""
     user = (f"Conversation type: {convo_type}\n\nSituation:\n{spec}\n\n"
-            f"Speakers: {who}")
+            f"Speakers: {who}{tprof}")
     for attempt in range(max_retries + 1):
         try:
             res = _call(base_url, model,

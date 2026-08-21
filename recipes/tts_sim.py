@@ -21,7 +21,8 @@ from fastmss.tts.plan import build_plan
 from fastmss.tts.simulator import TTSMeetingSimulator
 from fastmss.tts.refbank import build_bank, cast_meeting
 from fastmss.tts.scenarios import pick_type, sample_scenario
-from fastmss.tts.skeleton import sample_skeleton
+from fastmss.tts.skeleton import (describe_timing, sample_skeleton,
+                                  timing_profile)
 
 
 def default_cfg(**over):
@@ -129,7 +130,10 @@ def main():
                         for s in skel["slots"]}
         else:
             sexes = {k: v["sex"] for k, v in voices.items()}
-            c = cast(ctype, scen, sexes, base_url=a.base_url, model=a.model)
+            timing = describe_timing(timing_profile(skel))
+            print("  timing:"); print(timing)
+            c = cast(ctype, scen, sexes, timing=timing,
+                     base_url=a.base_url, model=a.model)
             premise, people = c["premise"], c["personas"]
             print(f"  premise: {premise}")
             for k, v in people.items():
@@ -150,6 +154,15 @@ def main():
                    "skeleton": skel, "dialogue": dialogue,
                    "records": [{k: v for k, v in r.items()} for r in records]},
                   open(out / "manifests" / f"{mid}_realized.json", "w"), indent=1)
+        # per-meeting manifests, written now rather than after the whole loop:
+        # a run killed part-way otherwise leaves finished audio with no cuts,
+        # no supervisions and no RTTM.
+        RecordingSet([rec]).to_file(out / "manifests" / f"{mid}-recordings.jsonl.gz")
+        SupervisionSet(sups).to_file(out / "manifests" / f"{mid}-supervisions.jsonl.gz")
+        lhotse.CutSet.from_manifests(recordings=RecordingSet([rec]),
+                                     supervisions=SupervisionSet(sups)) \
+            .to_file(out / "manifests" / f"{mid}-cuts.jsonl.gz")
+        write_rttm(sups, out / "manifests" / f"{mid}.rttm")
         print(f"  audio: {rec.duration:.1f}s -> {out/'audio'/(mid+'.wav')}")
 
     recordings, supervisions = RecordingSet(recs), SupervisionSet(all_sups)

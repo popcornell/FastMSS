@@ -141,3 +141,57 @@ if __name__ == "__main__":
     for s in sk["slots"]:
         ev[s["event"]] = ev.get(s["event"], 0) + 1
     print(f"\n{len(sk['slots'])} slots, {sk['planned_duration']}s planned, {ev}")
+
+
+def timing_profile(skeleton: dict) -> dict[str, dict]:
+    """Per-speaker turn-taking profile, derived from the sampled skeleton.
+
+    The HMM fixes who speaks, for how long, and how often BEFORE anyone has a
+    personality. Handing this to the cast step lets the personas be written to
+    fit the timing, instead of contradicting it -- otherwise you get a persona
+    who "over-explains" holding the shortest turns in the meeting.
+    """
+    prof: dict[str, dict] = {}
+    for s in skeleton["slots"]:
+        p = prof.setdefault(s["speaker"], {"turns": 0, "backchannels": 0,
+                                           "interrupts": 0, "holds": 0,
+                                           "words": [], "talk_s": 0.0})
+        if s["event"] == "backchannel":
+            p["backchannels"] += 1
+            continue
+        p["turns"] += 1
+        p["words"].append(s["target_words"])
+        p["talk_s"] += s["planned_dur"]
+        if s["event"] == "interrupt":
+            p["interrupts"] += 1
+        elif s["event"] == "hold":
+            p["holds"] += 1
+    total = sum(p["talk_s"] for p in prof.values()) or 1.0
+    for p in prof.values():
+        w = sorted(p["words"]) or [0]
+        p["median_words"] = w[len(w) // 2]
+        p["longest_words"] = w[-1]
+        p["share"] = round(p["talk_s"] / total, 2)
+        del p["words"], p["talk_s"]
+    return prof
+
+
+def describe_timing(prof: dict[str, dict]) -> str:
+    """Render the profile as plain English for the cast prompt."""
+    longest = max((p["longest_words"] for p in prof.values()), default=0)
+    lines = []
+    for spk, p in sorted(prof.items()):
+        bits = [f"{p['turns']} turns", f"typically {p['median_words']} words"]
+        if p["longest_words"] == longest and longest:
+            bits.append(f"has the longest turn in the conversation ({longest} words)")
+        if p["interrupts"] >= max(2, p["turns"] // 2):
+            bits.append(f"cuts in a lot ({p['interrupts']} interruptions)")
+        elif p["interrupts"] == 0:
+            bits.append("never cuts anyone off")
+        if p["holds"] >= 2:
+            bits.append("often carries on after their own pause")
+        if p["backchannels"] >= 2:
+            bits.append(f"mostly listens, {p['backchannels']} short reactions")
+        bits.append(f"{int(p['share'] * 100)}% of the talking")
+        lines.append(f"  {spk}: " + ", ".join(bits))
+    return "\n".join(lines)
