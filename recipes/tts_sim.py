@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -53,8 +54,9 @@ def main():
     ap.add_argument("--duration", type=float, default=30.0)
     ap.add_argument("--speakers", type=int, default=3)
     ap.add_argument("--backend", default="cosyvoice")
-    ap.add_argument("--librispeech",
-                    default="/Users/samco/Datasets/Librispeech/LibriSpeech")
+    ap.add_argument("--librispeech", default=os.environ.get("LIBRISPEECH_ROOT"),
+                    help="LibriSpeech root (or set $LIBRISPEECH_ROOT); the voice "
+                         "bank is cloned from its reference clips")
     ap.add_argument("--bank-limit", type=int, default=60)
     ap.add_argument("--model", default="qwen3:30b-a3b")
     ap.add_argument("--base-url", default="http://127.0.0.1:11434/v1")
@@ -67,6 +69,10 @@ def main():
     ap.add_argument("--out", default="exp/tts_sim")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
+
+    if not a.librispeech:
+        ap.error("--librispeech (or $LIBRISPEECH_ROOT) is required: the voice "
+                 "bank clones from LibriSpeech reference clips")
 
     out = Path(a.out)
     (out / "audio").mkdir(parents=True, exist_ok=True)

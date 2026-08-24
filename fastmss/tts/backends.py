@@ -48,23 +48,46 @@ def trim_silence(wav: np.ndarray, sr: int, thresh=0.02, pad_s=0.02) -> np.ndarra
     return wav[max(0, idx[0] - pad): min(len(wav), idx[-1] + pad)]
 
 
+def find_env_python() -> str:
+    """Interpreter for the separate CosyVoice env.
+
+    $COSYVOICE_PYTHON if set, else conda's `cosyvoice` env under the conda root
+    this process can see. Never sys.executable: the whole point of the worker is
+    that its torch pin is incompatible with ours.
+    """
+    env = os.environ.get("COSYVOICE_PYTHON")
+    if env:
+        return env
+    roots = []
+    if os.environ.get("CONDA_EXE"):                  # <root>/bin/conda
+        roots.append(Path(os.environ["CONDA_EXE"]).resolve().parents[1])
+    roots += [Path.home() / "miniconda3", Path.home() / "anaconda3",
+              Path.home() / "miniforge3"]
+    for r in roots:
+        cand = r / "envs" / "cosyvoice" / "bin" / "python"
+        if cand.exists():
+            return str(cand)
+    return str(roots[0] / "envs" / "cosyvoice" / "bin" / "python") if roots else "python"
+
+
 class CosyVoiceBackend:
     name = "cosyvoice"
     sr = 24000                                   # overwritten by the worker's report
 
-    def __init__(self, cache_dir="clips_native",
-                 env_python="/Users/samco/miniconda3/envs/cosyvoice/bin/python",
-                 worker=None, project_root=None):
+    def __init__(self, cache_dir="clips_native", env_python=None, worker=None):
         self.cache = Path(cache_dir)
         self.cache.mkdir(parents=True, exist_ok=True)
-        root = Path(project_root or Path(__file__).resolve().parents[3])
-        self.worker_path = str(worker or root / "cosyvoice_worker.py")
+        # The worker ships with this package; the env it runs in does not.
+        self.worker_path = str(worker or Path(__file__).with_name("cosyvoice_worker.py"))
+        env_python = str(env_python or find_env_python())
         if not os.path.exists(env_python):
             raise RuntimeError(
-                f"cosyvoice env python not found at {env_python}.\n"
+                f"cosyvoice env python not found at {env_python}. Create the env, then\n"
+                f"point COSYVOICE_PYTHON at its interpreter:\n"
                 f"  conda create -n cosyvoice python=3.10 -y && conda activate cosyvoice\n"
                 f"  conda install -c conda-forge pynini=2.1.6 -y\n"
-                f"  pip install -r third_party/CosyVoice/requirements.txt")
+                f"  pip install -r $COSYVOICE_REPO/requirements.txt\n"
+                f"  export COSYVOICE_PYTHON=$(python -c 'import sys; print(sys.executable)')")
         if not os.path.exists(self.worker_path):
             raise RuntimeError(f"cosyvoice_worker.py not found at {self.worker_path}")
         self.proc = subprocess.Popen(

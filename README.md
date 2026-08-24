@@ -34,6 +34,10 @@ cd FastMSS
 pip install -e .
 ```
 
+The TTS meeting pipeline (`recipes/tts_sim.py`) needs extra setup — a CosyVoice 3
+checkout in its own conda env, LibriSpeech, and an LLM endpoint. See
+[docs/tts.md](docs/tts.md).
+
 ## Project Structure
 
 ```
@@ -42,9 +46,11 @@ FastMSS/
 │   ├── simulator.py             # Meeting generation engine
 │   ├── hmm_turn_taking.py       # HMM turn-taking model
 │   ├── rirsimulator.py          # RIR generation via pyroomacoustics
-│   └── utils.py                 # Audio splitting, crossfading utilities
+│   ├── utils.py                 # Audio splitting, crossfading utilities
+│   └── tts/                     # Synthesised-speech meetings (see docs/tts.md)
 ├── recipes/
 │   ├── sim.py                   # Unified simulation pipeline
+│   ├── tts_sim.py               # TTS pipeline: HMM -> LLM fill -> CosyVoice
 │   ├── default.yaml             # Default config with sensible defaults
 │   └── paper/                   # Configs to reproduce paper experiments
 │       ├── ts_asr/              # TS-ASR experiment configs (Table 1 & 2)
