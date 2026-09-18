@@ -190,6 +190,59 @@ def split_recording_by_channels(recording: Recording) -> List[MonoCut]:
     return single_channel_cuts
 
 
+def _alignments_to_recording_frame(
+    items: List[AlignmentItem],
+    monocut: MonoCut,
+    supervision: SupervisionSegment,
+    tol: float = 0.05,
+) -> List[AlignmentItem]:
+    """
+    Make sure word alignments are expressed w.r.t. the start of the recording,
+    i.e. that they fall inside ``[monocut.start, monocut.end]``.
+
+    If they do not, try to detect whether they were stored relative to the cut
+    or relative to the supervision (both common when a forced aligner was run
+    on pre-cut audio) and shift them accordingly. Raise a descriptive error if
+    no frame of reference makes them fit the cut, instead of letting the
+    splitting logic produce segments with negative durations.
+    """
+    cut_start, cut_end = monocut.start, monocut.start + monocut.duration
+
+    def _fits(alis: List[AlignmentItem]) -> bool:
+        return all(
+            a.start >= cut_start - tol and a.start + a.duration <= cut_end + tol
+            for a in alis
+        )
+
+    if _fits(items):
+        return items
+
+    # Candidate frames, tried in order: relative to the cut, relative to the
+    # supervision (whose start is itself relative to the cut).
+    candidates = [
+        ("cut", cut_start),
+        ("supervision", cut_start + supervision.start),
+    ]
+    for name, offset in candidates:
+        shifted = [a.with_offset(offset) for a in items]
+        if _fits(shifted):
+            logging.getLogger(__name__).warning(
+                f"Cut {monocut.id}: word alignments appear to be relative to the "
+                f"{name} (not to the recording); shifting them by {offset:.3f}s. "
+                "Consider fixing the manifests so alignments are w.r.t. the recording."
+            )
+            return shifted
+
+    raise ValueError(
+        f"Cut {monocut.id} (start={cut_start:.3f}, end={cut_end:.3f}) has word "
+        f"alignments spanning [{min(a.start for a in items):.3f}, "
+        f"{max(a.start + a.duration for a in items):.3f}] that do not fit inside "
+        "the cut under any frame of reference (recording / cut / supervision). "
+        "Fix the alignments in the manifests or disable splitting with "
+        "split_fa_factor=null."
+    )
+
+
 def split_monocut_at_pauses(
     monocut: MonoCut, pause_threshold: float = 0.2, drop_without_alignment=True
 ) -> List[MonoCut]:
@@ -229,6 +282,16 @@ def split_monocut_at_pauses(
 
     if len(valid_alignments) == 0:
         return [monocut]  # No valid words, return original
+
+    # The splitting logic below compares alignment times against the cut's
+    # absolute (recording-level) start/end, so alignments must be expressed
+    # w.r.t. the start of the recording (Lhotse's documented convention).
+    # Manifests produced by running a forced aligner on already-cut audio
+    # often store them relative to the cut/supervision instead; when the cut
+    # does not start at 0 this silently yields negative gaps and durations.
+    valid_alignments = _alignments_to_recording_frame(
+        valid_alignments, monocut, supervision
+    )
 
     # Check for leading silence
     first_word = valid_alignments[0]
@@ -353,6 +416,12 @@ def split_monocut_at_pauses(
             continue
 
         segment_duration = segment_end - segment_start
+        if segment_duration <= 0:
+            raise ValueError(
+                f"Cut {monocut.id}: computed a segment with non-positive duration "
+                f"({segment_duration:.3f}s, words={[w.symbol for w in segment_words]}). "
+                "This indicates inconsistent alignment / cut boundaries in the manifests."
+            )
 
         # Adjust alignment times to be relative to segment start
         adjusted_alignments = []
