@@ -19,4 +19,10 @@ setup(
         "tqdm",
         "urllib3"
     ],
+    extras_require={
+        "pseudo_label": [
+            "nemo_toolkit[asr]>=2.0",
+            "huggingface_hub",
+        ],
+    },
 )
