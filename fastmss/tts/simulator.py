@@ -78,10 +78,18 @@ class TTSMeetingSimulator(ConversationalMeetingSimulator):
                 wav = wav.mean(axis=1)
             if sr0 != sr:
                 wav = resample_poly(wav, sr, sr0).astype("float32")
+            if wav.size == 0:
+                r["checks"].append("empty synthesized clip replaced with silence")
+                wav = np.zeros(1, dtype="float32")
             wav = wav[None, :]
             wav = wav - np.mean(wav, -1, keepdims=True)
             if cfg.use_fir:
-                wav = convolve(wav, self.create_fir_highpass(40, 63)[None, :], mode="full")
+                fir = self.create_fir_highpass(40, 63)
+                if wav.shape[-1] >= fir.shape[-1]:
+                    wav = convolve(wav, fir[None, :], mode="full", method="fft")
+                else:
+                    r["checks"].append(
+                        f"highpass skipped for short clip ({wav.shape[-1]} samples)")
 
             lvl = (base_gain + rel[r["speaker"]]
                    + self._drift(r["onset"], hash((recording_id, r["speaker"])) % 2**31)
@@ -137,9 +145,12 @@ class TTSMeetingSimulator(ConversationalMeetingSimulator):
 
         sups = []
         for i, (r, lvl) in enumerate(zip(records, speech_lvls)):
+            sup_dur = max(round(r["dur"], 4), 0.0001)
+            if sup_dur != round(r["dur"], 4):
+                r["checks"].append(f"supervision duration clamped from {r['dur']:.6f}s")
             sups.append(SupervisionSegment(
                 id=f"{recording_id}_{i:04d}", recording_id=recording_id,
-                start=round(r["onset"], 4), duration=round(r["dur"], 4),
+                start=round(r["onset"], 4), duration=sup_dur,
                 channel=0, speaker=r["speaker"], text=r["text"], language="English",
                 custom={"transition_type": r["event"].upper(),
                         "speech_level_db": round(lvl, 2),

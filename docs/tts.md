@@ -1,6 +1,6 @@
-# TTS meeting simulation
+# TTS pipeline setup
 
-`recipes/tts_sim.py` generates meetings whose speech is synthesised rather than
+The TTS recipes (`recipes/tts_staged.py`, `recipes/tts_sim.py`) generate meetings whose speech is synthesised rather than
 concatenated from a corpus: an HMM samples the turn-taking skeleton, an LLM fills
 it with dialogue, CosyVoice 3 renders each line cloning a LibriSpeech reference
 clip, and the usual FastMSS mixing/RIR path takes it from there.
@@ -39,14 +39,24 @@ conda deactivate
 
 | variable | default if unset |
 | --- | --- |
-| `COSYVOICE_REPO` | nearest `third_party/CosyVoice` walking up from the package |
+| `COSYVOICE_REPO` | `~/CosyVoice`, else nearest `third_party/CosyVoice` walking up from the package |
 | `COSYVOICE_PYTHON` | `<conda root>/envs/cosyvoice/bin/python` |
 | `COSYVOICE_MODEL` | `$COSYVOICE_REPO/pretrained_models/Fun-CosyVoice3-0.5B` |
 
-The worker runs on CPU: fp16 is CUDA-only in that codebase and MPS support is
-partial. It is a 0.5B model, so this is workable but not fast; the model loads
-once per run, not once per utterance, and prompt-derived speaker features are
-memoised per reference clip.
+The worker uses whatever GPU `CUDA_VISIBLE_DEVICES` exposes and falls back to
+CPU otherwise. The model loads once per run, not once per utterance, and
+prompt-derived speaker features are memoised per reference clip.
+
+Acceleration is opt-in, because it depends on how the local CosyVoice env was
+built. `recipes/tts_staged.py` sets these from its `--cosyvoice-*` flags:
+
+| variable | flag | effect |
+| --- | --- | --- |
+| `COSYVOICE_FP16=1` | `--cosyvoice-fp16` | fp16 inference (CUDA only) |
+| `COSYVOICE_LOAD_TRT=1` | `--cosyvoice-load-trt` | TensorRT flow decoder; the first run builds a `.plan` engine |
+| `COSYVOICE_TRT_CONCURRENT=N` | `--cosyvoice-trt-concurrent N` | TensorRT context count |
+| `COSYVOICE_LOAD_VLLM=1` | `--cosyvoice-load-vllm` | vLLM backend; needs `vllm` in the env and a `vllm/` model export |
+| `COSYVOICE_TEXT_FRONTEND=0` | `--cosyvoice-no-text-frontend` | skip CosyVoice text normalisation |
 
 ## 2. LibriSpeech
 
@@ -57,32 +67,41 @@ LibriSpeech (`fastmss/tts/refbank.py`). Pass `--librispeech`, or:
 export LIBRISPEECH_ROOT=/path/to/LibriSpeech
 ```
 
-## 3. An OpenAI-compatible LLM endpoint
+## 3. An LLM endpoint
 
-Dialogue fill (`fastmss/tts/fill.py`) posts to an OpenAI-compatible `/v1`
-endpoint — an Ollama server by default:
+Dialogue fill (`fastmss/tts/fill.py`) needs a chat endpoint with JSON-schema
+output. The default is a local Ollama server:
 
 ```bash
 ollama serve && ollama pull qwen3:30b-a3b
 ```
 
-Override with `--model` / `--base-url`, or skip it entirely with `--no-llm`,
-which stubs the fill and still exercises the timing + TTS + mixing path.
+A local Ollama URL (port 11434) goes to Ollama's native `/api/chat`; anything
+else is treated as an OpenAI-compatible `/v1` server (vLLM, SGLang, ...). Set
+`FASTMSS_LLM_API=openai` to force the OpenAI route. Override the endpoint with
+`--model` / `--base-url`, or skip the LLM entirely with `--no-llm`, which stubs
+the dialogue and still runs the timing + TTS + mixing path.
 
-## Run
+| variable | default | meaning |
+| --- | --- | --- |
+| `FASTMSS_LLM_MAX_TOKENS` | 1200 | default output cap (`--llm-max-tokens`) |
+| `FASTMSS_LLM_CAST_MAX_TOKENS` | max(900, 260 x speakers) | premise + personas call (`--llm-cast-max-tokens`) |
+| `FASTMSS_LLM_FILL_MAX_TOKENS` | 1600 | upper bound per dialogue chunk (`--llm-fill-max-tokens`) |
+| `FASTMSS_LLM_TEMPERATURE` | 0.35 | sampling temperature |
+| `FASTMSS_LLM_TOP_P` | 0.9 | nucleus sampling |
 
-```bash
-python recipes/tts_sim.py --n 3 --duration 30 --speakers 3 --reverberate \
-    --out exp/tts_sim
-```
+If long meetings fail with "LLM output hit max_tokens", raise the matching
+budget or lower `--fill-chunk`.
 
-Outputs land in `--out`: `audio/`, `manifests/` (lhotse recording +
-supervision sets), RTTMs, and `clips_native/` — the TTS cache, keyed by
-(text, instruction, reference clip), so re-runs do not re-synthesise.
-
-Smoke-test the pieces separately if something fails:
+## Smoke tests
 
 ```bash
 # is the worker env sane? should print {"ready": true, "sample_rate": 24000}
 echo '' | $COSYVOICE_PYTHON -u fastmss/tts/cosyvoice_worker.py
+
+# timing + TTS + mixing without an LLM
+python recipes/tts_staged.py --phase all --no-llm --n 1 --duration 15 --out exp/smoke
 ```
+
+The run commands and every recipe option are described in the
+[README](../README.md).

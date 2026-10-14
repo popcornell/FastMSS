@@ -17,7 +17,8 @@ import soundfile as sf
 BC_HEADROOM_DB = 4.0      # a backchannel must sit this far under its host
 INT_FLOOR_DB = 1.0        # an interrupter should not be quieter than the turn it cuts
 LEVEL_INERTIA = 0.5       # per-speaker Lombard carry-over across turns
-FADE_S = 0.04
+FADE_S = 0.04             # fade applied at an interruption cut point
+MIN_CLIP_S = 0.01         # pad shorter clips (e.g. truncated to ~0) so no WAV is empty
 
 
 def _rms_db(x):
@@ -156,7 +157,13 @@ def build_plan(skeleton, dialogue, backend, personas, out_dir="clips_final",
         t_prev_end = onset + dur
 
     # write the final (possibly truncated) clip for each utterance
+    min_samples = max(1, int(round(MIN_CLIP_S * sr)))
     for r in records:
+        if len(r["wav"]) < min_samples:
+            r["checks"].append(
+                f"clip padded from {len(r['wav'])} samples to {min_samples} samples")
+            r["wav"] = np.pad(r["wav"].astype("float32"),
+                                (0, min_samples - len(r["wav"])))
         p = out_dir / f"utt_{r['uid']:04d}.wav"
         sf.write(p, r["wav"].astype("float32"), sr, subtype="FLOAT")
         r["path"] = str(p)

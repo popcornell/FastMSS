@@ -10,7 +10,17 @@ A persistent process, not one call per utterance -- the model load dominates oth
 
 Protocol: one JSON object per line on stdin, one JSON object per line on stdout.
     in  {"text":..., "instruct":..., "speed":1.0, "prompt_wav":..., "out":...}
-    out {"ok":true, "path":..., "dur":...}  |  {"ok":false, "error":...}
+    out {"ok":true, "path":..., "dur":..., "samples":...}  |  {"ok":false, "error":...}
+
+Environment knobs (all optional; tts_staged.py sets them from its CLI flags):
+    COSYVOICE_REPO            CosyVoice checkout (see _find_cosyvoice)
+    COSYVOICE_MODEL           model dir, default $COSYVOICE_REPO/pretrained_models/Fun-CosyVoice3-0.5B
+    COSYVOICE_FP16=1          fp16 inference (CUDA only)
+    COSYVOICE_LOAD_TRT=1      TensorRT flow decoder; first run builds the .plan engine
+    COSYVOICE_TRT_CONCURRENT  TensorRT context count (default 1)
+    COSYVOICE_LOAD_VLLM=1     vLLM LLM backend; needs vllm in the env and a vllm/ model export
+    COSYVOICE_TEXT_FRONTEND=0 skip CosyVoice's text normalisation
+The device is whatever CUDA_VISIBLE_DEVICES exposes (CPU if none).
 """
 
 from __future__ import annotations
@@ -18,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -26,14 +37,19 @@ def _find_cosyvoice() -> str:
     """Locate the CosyVoice checkout.
 
     It is not vendored here -- it is a separate clone with its own submodules and
-    pretrained weights. $COSYVOICE_REPO wins; otherwise walk up from this file
-    looking for third_party/CosyVoice, which is where the setup notes put it.
+    pretrained weights. Search order: $COSYVOICE_REPO, then ~/CosyVoice, then
+    the nearest third_party/CosyVoice walking up from this file (where the setup
+    notes put it).
     """
     env = os.environ.get("COSYVOICE_REPO")
     if env:
         if not os.path.isdir(env):
             sys.exit(f"COSYVOICE_REPO={env!r} is not a directory")
         return os.path.abspath(env)
+    home = os.path.join(os.path.expanduser("~"), "CosyVoice")
+    if os.path.isdir(home):
+        return home
+
     d = HERE
     while True:
         cand = os.path.join(d, "third_party", "CosyVoice")
@@ -45,7 +61,9 @@ def _find_cosyvoice() -> str:
                 "CosyVoice checkout not found. Clone it and point COSYVOICE_REPO at it:\n"
                 "  git clone --recursive https://github.com/FunAudioLLM/CosyVoice \\\n"
                 "      third_party/CosyVoice\n"
-                "  export COSYVOICE_REPO=$PWD/third_party/CosyVoice")
+                "  export COSYVOICE_REPO=$PWD/third_party/CosyVoice\n"
+                "or use your existing checkout:\n"
+                "  export COSYVOICE_REPO=$HOME/CosyVoice")
         d = parent
 
 
@@ -54,10 +72,22 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "third_party", "Matcha-TTS"))
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    return os.environ.get(name, "1" if default else "0").lower() in {"1", "true", "yes", "on"}
+
+
 def main() -> None:
     model_dir = os.environ.get(
         "COSYVOICE_MODEL",
         os.path.join(REPO, "pretrained_models", "Fun-CosyVoice3-0.5B"))
+    fp16 = _env_flag("COSYVOICE_FP16", False)
+    load_trt = _env_flag("COSYVOICE_LOAD_TRT", False)
+    load_vllm = _env_flag("COSYVOICE_LOAD_VLLM", False)
+    text_frontend = _env_flag("COSYVOICE_TEXT_FRONTEND", True)
+    try:
+        trt_concurrent = int(os.environ.get("COSYVOICE_TRT_CONCURRENT", "1"))
+    except ValueError:
+        trt_concurrent = 1
 
     import contextlib
 
@@ -70,12 +100,14 @@ def main() -> None:
     sys.stdout = sys.stderr
     with contextlib.redirect_stdout(sys.stderr):
         from cosyvoice.cli.cosyvoice import CosyVoice3
-    
-    # fp16 is CUDA-only in this codebase; MPS support inside CosyVoice is partial, so
-    # CPU is the reliable choice on Apple silicon. It is a 0.5B model -- workable.
-    # CosyVoice3.__init__(model_dir, load_trt, load_vllm, fp16, trt_concurrent)
-    # -- no load_jit, unlike CosyVoice/CosyVoice2
-        model = CosyVoice3(model_dir, load_trt=False, load_vllm=False, fp16=False)
+
+        # CUDA use is controlled outside the worker with CUDA_VISIBLE_DEVICES.
+        # fp16/TRT/vLLM are opt-in because they depend on the local CosyVoice build.
+        # CosyVoice3.__init__(model_dir, load_trt, load_vllm, fp16, trt_concurrent)
+        # -- no load_jit, unlike CosyVoice/CosyVoice2
+        model = CosyVoice3(model_dir, load_trt=load_trt,
+                           load_vllm=load_vllm, fp16=fp16,
+                           trt_concurrent=trt_concurrent)
         sr = model.sample_rate
 
         # Memoise the prompt-derived features by reference-clip path.
@@ -123,11 +155,30 @@ def main() -> None:
             with contextlib.redirect_stdout(sys.stderr):
               for out in model.inference_instruct2(
                       job["text"], instruct, prompt,
-                      stream=False, speed=float(job.get("speed", 1.0))):
+                      stream=False, speed=float(job.get("speed", 1.0)),
+                      text_frontend=text_frontend):
                 chunks.append(out["tts_speech"])
             wav = torch.cat(chunks, dim=1) if chunks else torch.zeros(1, 0)
-            torchaudio.save(job["out"], wav, sr)
-            print(json.dumps({"ok": True, "path": job["out"], "dur": wav.shape[1] / sr}),
+            if wav.numel() == 0 or wav.shape[1] == 0:
+                raise RuntimeError("CosyVoice produced zero audio samples")
+            # Publish only a fully written, readable WAV. The parent runs in a
+            # separate process and must never observe a partially-created file.
+            out_path = os.path.abspath(job["out"])
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            partial_path = f"{out_path}.partial-{os.getpid()}-{uuid.uuid4().hex}"
+            try:
+                torchaudio.save(partial_path, wav, sr, format="wav")
+                info = torchaudio.info(partial_path)
+                if info.num_frames <= 0 or info.sample_rate != sr:
+                    raise RuntimeError(
+                        f"CosyVoice wrote invalid audio: {info.num_frames} frames at "
+                        f"{info.sample_rate} Hz")
+                os.replace(partial_path, out_path)
+            finally:
+                if os.path.exists(partial_path):
+                    os.unlink(partial_path)
+            print(json.dumps({"ok": True, "path": out_path, "dur": wav.shape[1] / sr,
+                              "samples": wav.shape[1]}),
                   file=real_stdout, flush=True)
         except Exception as exc:                     # keep the worker alive
             import traceback

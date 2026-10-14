@@ -17,6 +17,8 @@ also what makes it drift and double back the way real conversation does.
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 
 CONVO_TYPES: dict[str, dict[str, list[str]]] = {
     # ---------------------------------------------------------------- casual
@@ -186,6 +188,43 @@ def sample_scenario(convo_type: str, seed: int) -> dict[str, str]:
         h = hashlib.sha256(f"{convo_type}|{name}|{seed}".encode()).digest()
         out[name] = values[int.from_bytes(h[:8], "big") % len(values)]
     return out
+
+
+# --- collision-free sampling (used by tts_staged.py --append / --unique-scenarios)
+
+def scenario_key(convo_type: str, scenario: dict[str, str]) -> str:
+    """Return a stable identity for a complete scenario-axis assignment."""
+    return f"{convo_type}:" + json.dumps(scenario, sort_keys=True,
+                                          separators=(",", ":"))
+
+
+def sample_scenario_permuted(convo_type: str, ordinal: int, seed: int) -> dict[str, str]:
+    """Draw scenario ``ordinal`` from a seeded permutation of the full space.
+
+    Unlike independent hash draws, distinct ordinals cannot produce the same
+    complete axis tuple until every combination for this conversation type has
+    been used. This is useful when extending an existing synthetic corpus.
+    """
+    axes = CONVO_TYPES[convo_type]
+    size = space_size(convo_type)
+    if ordinal < 0:
+        raise ValueError("scenario ordinal must be non-negative")
+
+    # An affine map modulo ``size`` is a permutation when its multiplier and
+    # ``size`` are coprime. Hashing makes the ordering reproducible but opaque.
+    digest = hashlib.sha256(f"{convo_type}|scenario-permutation|{seed}".encode()).digest()
+    multiplier = int.from_bytes(digest[:8], "big") % size
+    while math.gcd(multiplier, size) != 1:
+        multiplier = (multiplier + 1) % size
+    offset = int.from_bytes(digest[8:16], "big") % size
+    index = (multiplier * (ordinal % size) + offset) % size
+
+    choices: dict[str, str] = {}
+    # Mixed-radix decoding gives one value from every axis.
+    for name, values in reversed(list(axes.items())):
+        index, value_index = divmod(index, len(values))
+        choices[name] = values[value_index]
+    return {name: choices[name] for name in axes}
 
 
 # Only random_convo is drawn by default. The structured types below are kept

@@ -3,3 +3,11 @@
 # python build artifacts
 __pycache__/
 *.egg-info/
+
+# run outputs and logs
+exp/
+nohup*.out
+*.log
+
+# external checkouts (CosyVoice, see docs/tts.md)
+third_party/

@@ -1,6 +1,8 @@
 """End-to-end TTS meeting simulation: HMM skeleton -> LLM fill -> TTS -> FastMSS.
 
-Runs alongside recipes/sim.py; nothing in the original recipe is touched.
+Single-pass version: the LLM and CosyVoice run interleaved, meeting by meeting,
+so both must fit in memory at once. For large corpora, one shared GPU, resume
+and NOTSOFAR-like specs, use recipes/tts_staged.py instead.
 
   python recipes/tts_sim.py --n 3 --duration 30 --reverberate
 """
@@ -10,13 +12,11 @@ import argparse
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
-
-import lhotse
-from lhotse import RecordingSet, SupervisionSet
 
 from fastmss.hmm_turn_taking import TransitionParams
 from fastmss.tts.backends import get_backend
+from fastmss.tts.corpus import (default_cfg, write_combined_manifests,
+                                write_meeting_manifests)
 from fastmss.tts.fill import cast, fill
 from fastmss.tts.plan import build_plan
 from fastmss.tts.simulator import TTSMeetingSimulator
@@ -24,28 +24,6 @@ from fastmss.tts.refbank import build_bank, cast_meeting
 from fastmss.tts.scenarios import pick_type, sample_scenario
 from fastmss.tts.skeleton import (describe_timing, sample_skeleton,
                                   timing_profile)
-
-
-def default_cfg(**over):
-    cfg = dict(samplerate=16000, base_gain=[-25.0, -12.0], rel_gain=[-6.0, 3.0],
-               use_fir=True, reverberate=False, reverb_prob=1.0,
-               add_noise=False, noise_rel_gain=[-20, -3],
-               noise_probability_global=1.0, multi_noise_sampling=True,
-               save_spk=True, save_anechoic=False,
-               rt60=[0.2, 0.6], room_sz=[5, 8], room_ceiling=[2.7, 3.5],
-               n_rirs=2, n_pos_rirs=6, delta_dist=0.5, use_rand_ism=False,
-               rand_disp=0.0, max_position_change=0.5, mic_type="single",
-               hmm_fit_transitions_to=None, boost_overlap_factor=None,
-               use_markov=False, min_max_spk=[3, 4], duration=30)
-    cfg.update(over)
-    return SimpleNamespace(**cfg)
-
-
-def write_rttm(sups, path):
-    with open(path, "w") as f:
-        for s in sups:
-            f.write(f"SPEAKER {s.recording_id} 1 {s.start:.3f} {s.duration:.3f} "
-                    f"<NA> <NA> {s.speaker} <NA> <NA>\n")
 
 
 def main():
@@ -163,21 +141,10 @@ def main():
         # per-meeting manifests, written now rather than after the whole loop:
         # a run killed part-way otherwise leaves finished audio with no cuts,
         # no supervisions and no RTTM.
-        RecordingSet([rec]).to_file(out / "manifests" / f"{mid}-recordings.jsonl.gz")
-        SupervisionSet(sups).to_file(out / "manifests" / f"{mid}-supervisions.jsonl.gz")
-        lhotse.CutSet.from_manifests(recordings=RecordingSet([rec]),
-                                     supervisions=SupervisionSet(sups)) \
-            .to_file(out / "manifests" / f"{mid}-cuts.jsonl.gz")
-        write_rttm(sups, out / "manifests" / f"{mid}.rttm")
+        write_meeting_manifests(out / "manifests", rec, sups)
         print(f"  audio: {rec.duration:.1f}s -> {out/'audio'/(mid+'.wav')}")
 
-    recordings, supervisions = RecordingSet(recs), SupervisionSet(all_sups)
-    lhotse.validate_recordings_and_supervisions(recordings, supervisions)
-    recordings.to_file(out / "manifests" / "tts-recordings.jsonl.gz")
-    supervisions.to_file(out / "manifests" / "tts-supervisions.jsonl.gz")
-    lhotse.CutSet.from_manifests(recordings=recordings, supervisions=supervisions) \
-        .to_file(out / "manifests" / "tts-cuts.jsonl.gz")
-    write_rttm(all_sups, out / "manifests" / "all.rttm")
+    write_combined_manifests(out / "manifests", recs, all_sups)
     if hasattr(backend, "close"):
         backend.close()
     print(f"\nOK: {len(recs)} meetings, {len(all_sups)} supervisions -> {out}/manifests")
