@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use FastMSS, please cite it as below."
+title: "FastMSS: fast multi speaker meeting simulation"
+type: software
+authors:
+  - family-names: Cornell
+    given-names: Samuele
+    affiliation: Carnegie Mellon University
+  - family-names: Polok
+    given-names: Alexander
+    affiliation: Brno University of Technology
+repository-code: "https://github.com/popcornell/FastMSS"
+license: Apache-2.0

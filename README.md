@@ -55,3 +55,8 @@ You can then simulate a meeting scenario with:
 python sim_librispeech.py stage=0 librispeech_dir=<YOUR_LIBRISPEECH_DIR> librispeech_align=<YOUR_ALIGN_DIR>/LibriSpeech_MFA/LibriSpeech
 ```
 
+
+## License
+
+FastMSS is released under the Apache License, Version 2.0 (see `LICENSE` and `NOTICE`).
+If you use FastMSS, please cite it (see `CITATION.cff`).
