@@ -200,10 +200,14 @@ python recipes/sim.py \
 If you use FastMSS in your research, please cite:
 
 ```bibtex
-@unpublished{polok2026mindthegap,
+@inproceedings{polok2026mindthegap,
     author = {Polok, Alexander and Medennikov, Ivan and Watanabe, Shinji and {\v{C}}ernock{\'y}, Jan and Burget, Luk{\'a}{\v{s}} and Cornell, Samuele},
     title = {Mind the Gap: Impact of Synthetic Conversational Data on Multi-Talker {ASR} and Speaker Diarization},
-    note = {Submitted to INTERSPEECH},
+    booktitle = {Proc. Interspeech},
     year = {2026}
 }
 ```
+
+## License
+
+FastMSS is released under the Apache License, Version 2.0 (see `LICENSE` and `NOTICE`).
