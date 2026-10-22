@@ -9,5 +9,8 @@ authors:
   - family-names: Polok
     given-names: Alexander
     affiliation: Brno University of Technology
+  - family-names: Medennikov
+    given-names: Ivan
+    affiliation: NVIDIA
 repository-code: "https://github.com/popcornell/FastMSS"
 license: Apache-2.0
