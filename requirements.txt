@@ -4,3 +4,8 @@ hydra-core
 lhotse
 pyroomacoustics
 tqdm
+soundfile
+scipy
+numpy
+omegaconf
+urllib3
