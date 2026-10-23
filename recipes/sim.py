@@ -35,7 +35,7 @@ _simulator: ConversationalMeetingSimulator = None
 # Set in main() before the worker Pool is forked. Worker processes inherit
 # this read-only via copy-on-write so we don't have to pickle a large dict
 # through Pool initargs (which was the cause of the hang on many CPUs).
-# REQUIRES the 'fork' start method — see the guard in stage 4.
+# Requires the 'fork' start method; see the guard in stage 4.
 _global_spk2cuts = None
 
 def _worker_init(cfg, output_dir, rirs, noise_files, base_seed):
@@ -243,11 +243,11 @@ def main(cfg: DictConfig) -> None:
             logger.warning(
                 "=" * 72 + "\n"
                 "  NO WORD-LEVEL ALIGNMENTS FOUND in source CutSet.\n"
-                "  FastMSS relies on word alignments to split utterances at natural\n"
-                "  pauses (split_fa_factor) and to place speaker turns precisely.\n"
-                "  Without alignments, simulated conversations will have less\n"
-                "  realistic timing and overlap -- separation/diarization/TS-ASR\n"
-                "  performance trained on this data will be noticeably worse.\n"
+                "  FastMSS uses word alignments to split utterances at pauses\n"
+                "  (split_fa_factor) and to place speaker turns. Without them, the\n"
+                "  timing and overlap of the simulated meetings are less accurate,\n"
+                "  and separation, diarization and TS-ASR models trained on the\n"
+                "  data are expected to perform worse.\n"
                 "  For LibriSpeech: run `lhotse prepare librispeech --alignments-dir\n"
                 "  <CorentinJ-style dir with *.alignment.txt files>` (see\n"
                 "  https://github.com/CorentinJ/librispeech-alignments).\n" + "=" * 72

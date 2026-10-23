@@ -30,7 +30,7 @@ if [[ -f "$FINAL_ZIP" ]]; then
     echo "Checking existing file..."
     actual_md5=$(md5sum "$FINAL_ZIP" | cut -d' ' -f1)
     if [[ "$actual_md5" == "$EXPECTED_MD5" ]]; then
-        echo "✓ File already exists and is valid!"
+        echo "File already exists and its MD5 matches."
         exit 0
     fi
     echo "Existing file is corrupted, re-downloading..."
@@ -132,12 +132,12 @@ cat ${TGT_DIR}/high_res_wham.zip.* > "${TGT_DIR}/${FINAL_ZIP}"
 echo "Verifying MD5..."
 actual_md5=$(md5sum "$FINAL_ZIP" | cut -d' ' -f1)
 if [[ "$actual_md5" == "$EXPECTED_MD5" ]]; then
-    echo "✓ Download verified successfully!"
+    echo "MD5 matches."
     echo "Cleaning up split files..."
     rm -f high_res_wham.zip.??
-    echo "✓ Complete! File: $FINAL_ZIP (68.1GB)"
+    echo "Done: $FINAL_ZIP (68.1GB)"
 else
-    echo "✗ MD5 verification failed!"
+    echo "MD5 mismatch."
     echo "Expected: $EXPECTED_MD5"
     echo "Actual:   $actual_md5"
     exit 1

@@ -6,7 +6,7 @@ stage: 0
 samplerate: 16000
 seed: null
 
-output_dir: null   # required — set via CLI
+output_dir: null   # required, set on the command line
 data_dir: null     # shared dataset prep dir (stage 1); falls back to output_dir if null
 rir_dir: null      # shared RIR dir (stage 3); falls back to output_dir if null
 hydra:
@@ -24,7 +24,7 @@ max_concurrent_speakers: 4
 # ============================================================
 # Source data
 # ============================================================
-manifest_dir: null  # required — set via CLI
+manifest_dir: null  # required, set on the command line
 manifest_prefix: librispeech
 dset_splits:
   - cutset_train-clean-100

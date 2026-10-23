@@ -179,7 +179,7 @@ def resample_folder(
                     errors += 1
 
     # Print summary
-    print(f"\nResampling complete!")
+    print("\nResampling done.")
     print(f"Processed: {processed}")
     print(f"Errors: {errors}")
     print(f"Skipped: {skipped}")

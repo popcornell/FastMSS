@@ -75,7 +75,7 @@ for tarfile in "${INSTALL_DIR}"/data/train/*.tar; do
     tar xf "${tarfile}" -C "${UNPACKED_DIR}" 2>/dev/null
 done
 
-# Some WebDataset formats nest files — flatten if needed
+# Some WebDataset shards nest files in subdirectories; flatten them
 # Move any nested flac/json to top level
 find "${UNPACKED_DIR}" -mindepth 2 -name "*.flac" -exec mv {} "${UNPACKED_DIR}/" \;
 find "${UNPACKED_DIR}" -mindepth 2 -name "*.json" -exec mv {} "${UNPACKED_DIR}/" \;

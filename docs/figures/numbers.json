@@ -1,0 +1,32 @@
+{
+  "pattern_max_abs_error": {
+    "subcardioid": 5.4182968556304445e-08,
+    "cardioid": 1.7216581149614996e-07,
+    "hypercardioid": 8.244498261866795e-08,
+    "figure8": 1.0992473875592879e-07
+  },
+  "rt60_target": 0.4544883182996897,
+  "tdoa_walk_median_abs_err": {
+    "direct path": 0.019189907426479635,
+    "reverberant": 0.22364783852863468
+  },
+  "rt60_schroeder_median": 0.48575183547376377,
+  "head_rotation": {
+    "external_median_abs_err": 0.09612094147212247,
+    "self_voice_ptp": 0.0
+  },
+  "noise_coherence_300_4000": {
+    "same": 0.4033403387638805,
+    "shifted": 0.1545933749353661,
+    "point": 0.37222639867067003,
+    "diffuse": 0.04154527203134153
+  },
+  "alignment_lags": {
+    "direct": -0.125,
+    "early": -0.125,
+    "reverberant": -0.125,
+    "ch_far_minus_ref_est": 5.3125,
+    "ch_far_minus_ref_geo": 5.317578900889387
+  },
+  "crosstalk_max_db": -27.373025991692366
+}
