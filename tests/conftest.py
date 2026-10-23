@@ -83,3 +83,39 @@ def scene_directional(tmp_path_factory):
     )
     path = SceneBankSimulator(cfg).gen_scene("room_0")
     return cfg, path
+
+
+@pytest.fixture(scope="session")
+def scene_listener(tmp_path_factory):
+    """wearer=listener: the glasses are worn by a silent person on a seat."""
+    work = tmp_path_factory.mktemp("scene_listener")
+    np.random.seed(2)
+    cfg = spatial_cfg(
+        work,
+        dict(
+            devices=[{"preset": "glasses"}, {"preset": "ami"}, {"preset": "closetalk"}],
+            wearer="listener",
+            n_wearer_seats=1,
+            n_yaw=8,
+        ),
+    )
+    path = SceneBankSimulator(cfg).gen_scene("room_0")
+    return cfg, path
+
+
+@pytest.fixture(scope="session")
+def scene_closetalk_directional(tmp_path_factory):
+    """Cardioid talkers with closetalk headsets, plus a talking glasses wearer."""
+    work = tmp_path_factory.mktemp("scene_ct_dir")
+    np.random.seed(3)
+    cfg = spatial_cfg(
+        work,
+        dict(
+            devices=[{"preset": "closetalk"}, {"preset": "glasses"}, {"preset": "single"}],
+            source_directivity={"pattern": "cardioid", "n_orient": 4},
+            n_wearer_seats=1,
+            n_yaw=8,
+        ),
+    )
+    path = SceneBankSimulator(cfg).gen_scene("room_0")
+    return cfg, path

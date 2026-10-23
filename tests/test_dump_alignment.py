@@ -122,21 +122,53 @@ def test_dumps_align_with_mixture_and_dry(scene_all, data_dir, tmp_path, dump):
 
 @pytest.mark.parametrize("dump", ["ref", "all"])
 def test_reverberant_images_sum_to_mixture(scene_all, data_dir, tmp_path, dump):
+    """Without noise the mixture is the sum of the reverberant speaker images:
+    on every channel (dump=all) or on the reference channel (dump=ref). With
+    dump=ref, closetalk images are each speaker's own headset channel, so
+    they do not sum to one channel: test_dump_ref_equals_dump_all_ref_channel
+    covers them."""
     sim, recs, sups, _ = _run(scene_all, data_dir, tmp_path / "audio", dump, MOVING, add_noise=False)
+    scene = sim._load_scene(sim.scenes[0])[0]
     for rec in recs:
+        meta = scene["devices"][rec.id.split("_", 1)[1]]
         mix = _read(rec.sources[0].source)
         audio_dir = Path(rec.sources[0].source).parent
-        spks = sorted({s.speaker for s in sups if s.recording_id == rec.id})
-        total = np.zeros_like(mix)
-        for spk in spks:
-            img = _read(audio_dir / f"{rec.id}-spk-{spk}.wav")
-            if dump == "all":
-                total += img
-            else:
-                continue
+        rs = [s for s in sups if s.recording_id == rec.id]
+        spks = sorted({s.speaker for s in rs})
+        imgs = {spk: _read(audio_dir / f"{rec.id}-spk-{spk}.wav") for spk in spks}
+        tol = 1e-3 * (len(spks) + 1)  # 16-bit wav quantization of each file only
         if dump == "all":
-            # 16-bit wav quantization of each file only
-            assert np.max(np.abs(total - mix)) < 1e-3 * (len(spks) + 1), rec.id
+            total = sum(imgs.values())
+            assert np.max(np.abs(total - mix)) < tol, rec.id
+        elif meta["placement"] != "mouth":
+            ref = meta["ref_channel"]
+            total = sum(img[0] for img in imgs.values())
+            assert np.max(np.abs(total - mix[ref])) < tol, rec.id
+
+
+def test_dump_ref_equals_dump_all_ref_channel(scene_all, data_dir, tmp_path):
+    """Same seed: dump=ref writes exactly the reference channel of dump=all
+    (own headset channel for closetalk), for every image type, and the
+    mixtures are identical."""
+    runs = {}
+    for dump in ("ref", "all"):
+        sim, recs, sups, _ = _run(scene_all, data_dir, tmp_path / dump, dump, MOVING, add_noise=True)
+        runs[dump] = (recs, sups)
+    scene = sim._load_scene(sim.scenes[0])[0]
+    for rr, ra in zip(runs["ref"][0], runs["all"][0]):
+        dev = rr.id.split("_", 1)[1]
+        assert ra.id.split("_", 1)[1] == dev
+        meta = scene["devices"][dev]
+        np.testing.assert_array_equal(_read(rr.sources[0].source), _read(ra.sources[0].source))
+        rs = [s for s in runs["ref"][1] if s.recording_id == rr.id]
+        dr, da = Path(rr.sources[0].source).parent, Path(ra.sources[0].source).parent
+        for spk in sorted({s.speaker for s in rs}):
+            ref = next(s for s in rs if s.speaker == spk).custom["spatial"].get("closetalk_channel", meta["ref_channel"])
+            for suf in ("", "-anechoic", "-early"):
+                a = _read(dr / f"{rr.id}-spk-{spk}{suf}.wav")
+                b = _read(da / f"{ra.id}-spk-{spk}{suf}.wav")
+                assert a.shape[0] == 1 and b.shape[0] == ra.num_channels
+                np.testing.assert_array_equal(a[0], b[ref], err_msg=f"{dev} {spk} {suf}")
 
 
 def test_moving_dumps_stay_aligned(scene_all, data_dir, tmp_path):

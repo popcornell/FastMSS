@@ -325,16 +325,23 @@ class SceneBankSimulator:
                 for si, s in enumerate(seats):
                     for yi, y in enumerate(yaws):
                         poses.append({"center": s.tolist(), "yaw": float(y), "kind": "seat", "seat": si, "yaw_idx": yi})
-            else:  # closetalk: one headset pose per node and per wearer seat
+            else:
+                # closetalk: one headset pose in front of every talker mouth
+                # orientation: per node and yaw bin (omni talkers: facing the
+                # table), per wearer seat and head-yaw bin (matches mouth_entries)
                 off = np.asarray(sp["closetalk_offset"], dtype=float)
                 mo = np.asarray(sp["mouth_offset"], dtype=float)
                 for ni, p in enumerate(nodes):
-                    y = yaw_towards(p, np.r_[center_xy, p[2]])
-                    poses.append({"center": (p + rot_z(y) @ off).tolist(), "yaw": y, "kind": "node", "node": ni})
-                for si, s in enumerate(seats):
-                    y = yaw_towards(s, np.r_[center_xy, s[2]])
-                    m = s + rot_z(y) @ mo
-                    poses.append({"center": (m + rot_z(y) @ off).tolist(), "yaw": y, "kind": "seat", "seat": si})
+                    ys = orient_yaws if n_orient > 1 else [yaw_towards(p, np.r_[center_xy, p[2]])]
+                    for k, y in enumerate(ys):
+                        y = float(y)
+                        poses.append({"center": (p + rot_z(y) @ off).tolist(), "yaw": y, "kind": "node", "node": ni, "orient": k})
+                if mouth_entries:
+                    for si, s in enumerate(seats):
+                        for yi, y in enumerate(yaws):
+                            y = float(y)
+                            m = s + rot_z(y) @ mo
+                            poses.append({"center": (m + rot_z(y) @ off).tolist(), "yaw": y, "kind": "seat", "seat": si, "yaw_idx": yi})
             mic_pos, mic_dir = [], []
             for pose in poses:
                 if d.per_speaker:
@@ -412,7 +419,8 @@ class SceneBankSimulator:
             if d.worn:
                 P = n_seats * sp["n_yaw"]
             elif d.per_speaker:
-                P = self.cfg.n_pos_rirs + (n_seats if any(x.worn for x in devices) else 0)
+                wearer_talks = any(x.worn for x in devices) and sp["wearer"] == "speaker"
+                P = self.cfg.n_pos_rirs * n_orient + (n_seats * sp["n_yaw"] if wearer_talks else 0)
             else:
                 P = 1
             total += P * n_src * d.n_mics * L

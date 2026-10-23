@@ -257,8 +257,9 @@ marked in `fastmss/spatial/devices.py`.
 
 - Walking talkers can only follow the precomputed paths.
 - Wearers do not change seat during a meeting.
-- For a walking talker, the cross-talk into their own close-talk headset
-  uses the nearest node's RIR.
+- Close-talk headsets are precomputed in front of each node's mouth (per
+  orientation bin) and each wearer's mouth (per head-yaw bin). A walking
+  talker's headset uses the nearest node and orientation.
 - RIR interpolation between path points `traj_step` apart can add mild comb
   filtering at high frequencies while moving. A smaller `traj_step` reduces
   it, at the cost of a bigger bank.
@@ -270,7 +271,11 @@ marked in `fastmss/spatial/devices.py`.
   and rotating heads;
 - directivity patterns and the bank's orientation bins;
 - RT60 and diffuse coherence;
-- dumped references aligned with the mixture's reference channel.
+- dumped references aligned with the mixture's reference channel, summing to
+  the mixture, and `dump=ref` equal to the reference channel of `dump=all`;
+- close-talk crosstalk (own headset ≥ 20 dB above the others), the noise
+  level at the reference channel and the per-utterance speech levels;
+- `wearer: listener` (no mouth sources, nobody on the wearer's seat).
 
 `tests/plot_scene.py <scene.json>` draws the room, the directivity check and
 a moving-talker TDOA track.

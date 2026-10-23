@@ -24,7 +24,7 @@ from scipy.signal import convolve
 
 from ..simulator import ConversationalMeetingSimulator, cached_load_audio
 from .config import get_spatial_cfg
-from .motion import MotionPlanner, _state_at
+from .motion import MotionPlanner, SceneView, _state_at, nearest_bin
 from .render import combine_schedules, render
 from .scene import direct_delay
 
@@ -43,6 +43,9 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
         self.scenes = scenes  # list of scene.json paths
         self.sp = get_spatial_cfg(cfg)
         self._loaded = {}
+        # worn devices of the current meeting: {device: (speaker or None, seat)}
+        # and {device: [(t, head pose)]}
+        self._wearers, self._head_sched = {}, {}
 
     # ------------------------------------------------------------------ #
     def _load_scene(self, path):
@@ -69,6 +72,49 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
         if fir_highpass is not None:
             c_audio = convolve(c_audio, fir_highpass[None, :], mode="full")
         return c_audio[0]
+
+    def _headset_poser(self, meta, scene, pos_tl):
+        """Closetalk headset pose lookup.
+
+        Returns (pose_for_entry, headset_pose): the headset pose in front of the
+        mouth of talker source entry e, and the pose of speaker spk's headset at
+        time t (wearers follow their head yaw, walkers snap to the nearest node
+        and orientation)."""
+        poses = meta["poses"]
+        view = SceneView(scene)
+        n_yaw = len(scene["yaws"])
+        src_pos = np.asarray(scene["sources"]["pos"])
+        src_yaw = np.asarray(scene["sources"]["yaw"])
+        orient_yaws = np.asarray(scene["orient_yaws"])
+        node_pos = np.asarray([n["pos"] for n in scene["nodes"]])
+        node_pose = {(p["node"], p.get("orient", 0)): k for k, p in enumerate(poses) if p["kind"] == "node"}
+        seat_pose = {(p["seat"], p.get("yaw_idx", 0)): k for k, p in enumerate(poses) if p["kind"] == "seat"}
+        n_orient = 1 + max(o for _, o in node_pose)
+        e2pose = {}
+        for ni, n in enumerate(scene["nodes"]):
+            for k, e in enumerate(n["entries"]):
+                e2pose[e] = node_pose[(ni, k if n_orient > 1 else 0)]
+        for si, ents in enumerate(scene["mouth_entries"]):
+            for yi, e in enumerate(ents):
+                e2pose[e] = seat_pose[(si, yi)]
+        wearer_dev = {s: (d, seat) for d, (s, seat) in self._wearers.items() if s is not None}
+
+        def pose_for_entry(e):
+            if e in e2pose:
+                return e2pose[e]
+            # walking: nearest node, orientation closest to the walking direction
+            ni = int(np.argmin(np.linalg.norm(node_pos - src_pos[e][None, :], axis=1)))
+            k = nearest_bin(src_yaw[e], orient_yaws) if n_orient > 1 else 0
+            return node_pose[(ni, k)]
+
+        def headset_pose(spk, t):
+            if spk in wearer_dev:
+                dname, seat = wearer_dev[spk]
+                b = _state_at(self._head_sched[dname], t) - seat * n_yaw
+                return pose_for_entry(scene["mouth_entries"][seat][b])
+            return pose_for_entry(view.entry_for(_state_at(pos_tl[spk], t)))
+
+        return pose_for_entry, headset_pose
 
     # ------------------------------------------------------------------ #
     def _render_one(self, x, src_sched, mic_sched, bank, dbank, mic_pos, src_pos, ref_ch, want_early):
@@ -115,21 +161,7 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
 
         if closetalk:
             n_ch = len(speakers)
-            node_pose = {p["node"]: k for k, p in enumerate(poses) if p["kind"] == "node"}
-            seat_pose = {p["seat"]: k for k, p in enumerate(poses) if p["kind"] == "seat"}
-            node_pos = np.asarray([n["pos"] for n in scene["nodes"]])
-
-            def headset_pose(spk, t):
-                st = _state_at(pos_tl[spk], t)
-                if st.node is not None:
-                    return node_pose[st.node]
-                if st.traj is None and seat_pose:
-                    # wearer standing at a seat
-                    seats = np.asarray(scene["seats"])
-                    si = int(np.argmin(np.linalg.norm(seats - st.pos[None, :], axis=1)))
-                    if np.linalg.norm(seats[si] - st.pos) < 1e-6:
-                        return seat_pose[si]
-                return node_pose[int(np.argmin(np.linalg.norm(node_pos - st.pos[None, :], axis=1)))]
+            pose_for_entry, headset_pose = self._headset_poser(meta, scene, pos_tl)
         else:
             n_ch = meta["n_ch"]
             dev_ref = meta["ref_channel"] if ref_cfg["channel"] is None else int(ref_cfg["channel"])
@@ -144,8 +176,9 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
             if closetalk:
                 own = speakers.index(spk)
                 outs = [None] * n_ch
-                own_pose = headset_pose(spk, off)
-                # own headset moves rigidly with the head: static self RIR
+                # own headset in front of the mouth at the utterance start; it
+                # moves rigidly with the head: static self RIR
+                own_pose = pose_for_entry(mot.schedule[0][1])
                 outs[own] = self._render_one(
                     x, [(0.0, mot.schedule[0][1])], [(0.0, own_pose)], bank, dbank, mic_pos, src_pos, 0, want_early
                 )
@@ -259,16 +292,10 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
             H = np.stack([sum(w * h(p) for w, p, _ in c) for c in combos])
             return render(x, times, H)[:, :T]
         if meta["placement"] == "mouth":
-            node_pose = {p["node"]: k for k, p in enumerate(meta["poses"]) if p["kind"] == "node"}
-            node_pos = np.asarray([n["pos"] for n in scene["nodes"]])
+            _, headset_pose = self._headset_poser(meta, scene, pos_tl)
             chans = []
             for spk in speakers:
-                st = pos_tl[spk][0][1]
-                if st.node is not None:
-                    p = node_pose[st.node]
-                else:
-                    p = node_pose[int(np.argmin(np.linalg.norm(node_pos - st.pos[None, :], axis=1)))]
-                chans.append(render(x, [0], h(p)[None])[:, :T])
+                chans.append(render(x, [0], h(headset_pose(spk, 0.0))[None])[:, :T])
             return np.concatenate(chans, 0)
         return render(x, [0], h(0)[None])[:, :T]
 
@@ -300,9 +327,11 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
                     raise ValueError("Scene bank was generated with wearer=listener")
                 spk = wearer_spk[k]
             wearers[dname] = (spk, int(seats[k]))
+        self._wearers = wearers
 
         planner = MotionPlanner(scene, sp)
         motions, head_sched, pos_tl = planner.plan(speakers, timeline.utterances, timeline.offsets, wearers)
+        self._head_sched = head_sched
 
         do_reverb = self.cfg.reverberate and np.random.random() < getattr(self.cfg, "reverb_prob", 1.0)
         dry = [self._load_dry(cut, fir_highpass) for cut in timeline.utterances]
