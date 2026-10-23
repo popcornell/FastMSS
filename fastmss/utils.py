@@ -1,5 +1,7 @@
 import logging
+from dataclasses import replace
 from functools import partial
+from itertools import islice
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import lhotse
@@ -292,14 +294,17 @@ def split_monocut_at_pauses(
     valid_alignments = _alignments_to_recording_frame(
         valid_alignments, monocut, supervision
     )
+    valid_alignments = sorted(
+        valid_alignments,
+        key=lambda item: (item.start, item.start + item.duration, item.symbol),
+    )
 
     # Check for leading silence
     first_word = valid_alignments[0]
     leading_silence = first_word.start - monocut.start
 
     # Check for trailing silence
-    last_word = valid_alignments[-1]
-    last_word_end = last_word.start + last_word.duration
+    last_word_end = max(item.start + item.duration for item in valid_alignments)
     monocut_end = monocut.start + monocut.duration
     trailing_silence = monocut_end - last_word_end
 
@@ -319,13 +324,15 @@ def split_monocut_at_pauses(
         split_points.append(split_time)
         current_segment_start_time = split_time
 
-    # Find gaps between words that exceed threshold
+    # A long event can span several shorter words. Only split after the
+    # complete union of overlapping alignment intervals has ended.
+    covered_end = valid_alignments[0].start + valid_alignments[0].duration
     for i in range(len(valid_alignments) - 1):
         current_item = valid_alignments[i]
         next_item = valid_alignments[i + 1]
 
-        current_end = current_item.start + current_item.duration
-        gap_start = current_end
+        covered_end = max(covered_end, current_item.start + current_item.duration)
+        gap_start = covered_end
         gap_end = next_item.start
         gap_duration = gap_end - gap_start
 
@@ -347,6 +354,7 @@ def split_monocut_at_pauses(
             current_segment_start_time = split_time
             current_word_start_idx = i + 1
             split_points.append(split_time)
+        covered_end = max(covered_end, next_item.start + next_item.duration)
 
     # Handle the final segment
     final_segment_end_time = monocut_end
@@ -377,8 +385,10 @@ def split_monocut_at_pauses(
     # If no splits were made, return original
     if not split_points:
         adjusted_alignments = []
-        supervision = monocut.supervisions[0]
-        for item in supervision.alignment["word"]:
+        normalized_alignments = _alignments_to_recording_frame(
+            supervision.alignment["word"], monocut, supervision
+        )
+        for item in normalized_alignments:
             adjusted_item = AlignmentItem(
                 symbol=item.symbol,
                 start=item.start - monocut.start,
@@ -399,8 +409,7 @@ def split_monocut_at_pauses(
             custom=supervision.custom,
             alignment={"word": adjusted_alignments},
         )
-        monocut.supervisions = [new_supervision]
-        return [monocut]
+        return [replace(monocut, supervisions=[new_supervision])]
 
     # Create new MonoCuts for each segment
     result_cuts = []
@@ -469,26 +478,39 @@ def split_monocut_at_pauses(
 
 
 def split_monocuts_batch(
-    monocuts: List[MonoCut], pause_threshold: float = 0.2, num_jobs: int = 1
-) -> List[MonoCut]:
+    monocuts: List[MonoCut],
+    pause_threshold: float = 0.2,
+    num_jobs: int = 1,
+    batch_size: int = 50000,
+) -> lhotse.CutSet:
     """
     Split a list of MonoCuts at pauses longer than the specified threshold.
 
     Args:
         monocuts: List of MonoCuts to split
         pause_threshold: Minimum pause duration in seconds to split at (default: 0.2s = 200ms)
+        batch_size: Maximum input cuts submitted per parallel-map invocation.
+            Input is consumed incrementally, including lazy CutSets. The returned
+            CutSet still holds all output cuts in memory.
 
     Returns:
         List of all resulting MonoCut objects
     """
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
     result = []
     helper_func = partial(split_monocut_at_pauses, pause_threshold=pause_threshold)
     n_monocuts = len(monocuts)
     monocuts = iter(monocuts)
-    for elem in tqdm(
-        parallel_map(helper_func, monocuts, num_jobs=num_jobs),
+    with tqdm(
         total=n_monocuts,
         desc="Splitting cuts using forced alignment.",
-    ):
-        result.extend(elem)
+    ) as progress:
+        while True:
+            batch = list(islice(monocuts, batch_size))
+            if not batch:
+                break
+            for elem in parallel_map(helper_func, batch, num_jobs=num_jobs):
+                result.extend(elem)
+                progress.update(1)
     return lhotse.CutSet(result)

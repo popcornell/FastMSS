@@ -195,6 +195,25 @@ python recipes/sim.py \
     manifest_dir=/path/to/manifests
 ```
 
+## Testing pause-based preprocessing
+
+Pause splitting sorts word/event alignments and considers their combined coverage.
+A long event overlapping shorter words is kept intact; splits occur only in gaps
+between covered intervals. Existing recording/cut/supervision frame detection is
+preserved.
+
+`fastmss.utils.split_monocuts_batch(..., batch_size=50000)` consumes input cuts in
+bounded batches, including lazy CutSets. Set `batch_size` to a positive integer to
+control how many cuts are submitted to each parallel-map invocation. The returned
+CutSet still keeps all output cuts in memory.
+
+With the FastMSS dependencies and `pytest` installed, run the synthetic manifest
+regression tests (no speech download is needed):
+
+```bash
+python -m pytest tests/test_utils.py -q
+```
+
 ## Citation
 
 If you use FastMSS in your research, please cite:
