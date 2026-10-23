@@ -97,3 +97,25 @@ save_spk: false
 save_anechoic: false
 save_rttm: false
 save_nemo_manifest: false
+
+# ============================================================
+# Multi-channel spatial simulation (optional)
+# ============================================================
+# Without a `spatial` block (or with enabled: false) the legacy single-mic path
+# above is used unchanged. Ready-made setups live in recipes/multichannel/:
+#   python recipes/sim.py +multichannel=ami|notsofar1|kinect|chime6|easycom|closetalk ...
+# All keys and their defaults: fastmss/spatial/config.py.
+#
+# spatial:
+#   enabled: true
+#   devices:                       # one recording per device when > 1
+#     - {preset: ami}              # single|circular|ami|notsofar1|kinect|binaural_worn|glasses|closetalk
+#   source_directivity: {pattern: cardioid, n_orient: 4}   # omni|subcardioid|cardioid|hypercardioid|figure8
+#   wearer: speaker                # worn devices: speaker (self-voice) | listener
+#   motion:
+#     inter: random_walk           # random | static | random_walk
+#     max_position_change: 0.5
+#     intra: walk_rotate           # none | walk | rotate | walk_rotate
+#     move_prob: 0.2
+#   noise: {type: diffuse, signal: same, pattern: hypercardioid}   # type mono = legacy; signal shifted = more diffuse
+#   reference: {channel: null, dump: ref, type: direct}            # dump ref|all; type direct|early|both

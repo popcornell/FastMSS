@@ -1,0 +1,16 @@
+# @package _global_
+# EasyCom-like AR glasses (4 frame mics + 2 in-ear) worn by one of the talkers,
+# whose head turns towards the active talker.
+# python recipes/sim.py +multichannel=easycom output_dir=... manifest_dir=...
+defaults:
+  - _common
+
+spatial:
+  devices:
+    - {preset: glasses}
+  wearer: speaker      # speaker (self-voice) | listener (silent wearer)
+  n_wearer_seats: 2
+  n_yaw: 8
+  motion:
+    head_turn_prob: 0.7
+    head_jitter: 20.0

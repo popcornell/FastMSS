@@ -1,0 +1,130 @@
+{
+ "clean": [
+  {
+   "files": {
+    "ID.wav": "84bcd645b60f01b0"
+   },
+   "num_samples": 168185,
+   "rng": "46e6359e574ecb1c",
+   "sups": "d044429f48947f06"
+  },
+  {
+   "files": {
+    "ID.wav": "102c4a7a0d321f31"
+   },
+   "num_samples": 257166,
+   "rng": "cf1fc5199560e4e9",
+   "sups": "0b2e8f5ac99e7692"
+  },
+  {
+   "files": {
+    "ID.wav": "3b253e2f393b88d1"
+   },
+   "num_samples": 141299,
+   "rng": "a9a3cfb856ce25fe",
+   "sups": "3455ba93c61d6fab"
+  }
+ ],
+ "gaussian_noise_markov": [
+  {
+   "files": {
+    "ID.wav": "adf908ed4621aaea"
+   },
+   "num_samples": 138189,
+   "rng": "7efa9a1945c8e6fe",
+   "sups": "5f131e832afca160"
+  },
+  {
+   "files": {
+    "ID.wav": "ceede4581b710f23"
+   },
+   "num_samples": 150241,
+   "rng": "3f35b0177505763e",
+   "sups": "3b212800916a9818"
+  },
+  {
+   "files": {
+    "ID.wav": "8a38413e2b9e5243"
+   },
+   "num_samples": 168867,
+   "rng": "4339d1edce770504",
+   "sups": "03abf34576a1a800"
+  }
+ ],
+ "reverb_noise_dumps": [
+  {
+   "files": {
+    "ID-spk-spk1-anechoic.wav": "6081db57ca53ba67",
+    "ID-spk-spk1.wav": "65e27a3a41c9578f",
+    "ID-spk-spk2-anechoic.wav": "5d51cc9afbdeef5c",
+    "ID-spk-spk2.wav": "8fd55fddf6d8e546",
+    "ID-spk-spk3-anechoic.wav": "9025b7792c36528f",
+    "ID-spk-spk3.wav": "2a90616e07b87b62",
+    "ID.wav": "7a8d5f1c091c4d49"
+   },
+   "num_samples": 177204,
+   "rng": "5d8050c8de80acd2",
+   "sups": "d044429f48947f06"
+  },
+  {
+   "files": {
+    "ID-spk-spk1-anechoic.wav": "219dc5d9695a1da6",
+    "ID-spk-spk1.wav": "763e42fa688510e1",
+    "ID-spk-spk2-anechoic.wav": "d0aeed1b2667d06b",
+    "ID-spk-spk2.wav": "c2b863d1154d5373",
+    "ID-spk-spk3-anechoic.wav": "5902d9c6a2bab37d",
+    "ID-spk-spk3.wav": "ed3464360ba167d3",
+    "ID.wav": "df97114492e76459"
+   },
+   "num_samples": 164479,
+   "rng": "f1a1313330d27228",
+   "sups": "03dd5d81e9a1de36"
+  },
+  {
+   "files": {
+    "ID-spk-spk0-anechoic.wav": "d19d9bbd4a3a8b15",
+    "ID-spk-spk0.wav": "2ccefb87fc5104c2",
+    "ID-spk-spk2-anechoic.wav": "ca6b6e69e229dca9",
+    "ID-spk-spk2.wav": "613f1ae2516bee47",
+    "ID.wav": "25bb826e26945f41"
+   },
+   "num_samples": 163997,
+   "rng": "f986c51befa9f5d7",
+   "sups": "b4e6d48b2267ec0d"
+  }
+ ],
+ "single_noise_fir": [
+  {
+   "files": {
+    "ID-spk-spk1.wav": "0108c82f791daa64",
+    "ID-spk-spk2.wav": "71e40ce24a625cbc",
+    "ID-spk-spk3.wav": "432d856da1b27ebd",
+    "ID.wav": "9c4426591372bfe4"
+   },
+   "num_samples": 177266,
+   "rng": "a67f2e44b5706c8c",
+   "sups": "d044429f48947f06"
+  },
+  {
+   "files": {
+    "ID-spk-spk1.wav": "1031dd384c174798",
+    "ID-spk-spk2.wav": "287f705e2e800ba6",
+    "ID-spk-spk3.wav": "789dd05f4970b4bd",
+    "ID.wav": "c670efb6c1cb69ea"
+   },
+   "num_samples": 148306,
+   "rng": "8701d4fef24949bb",
+   "sups": "5a54d6389b133241"
+  },
+  {
+   "files": {
+    "ID-spk-spk0.wav": "a999771e1684f184",
+    "ID-spk-spk2.wav": "a09d85422e0f1ffb",
+    "ID.wav": "50e8a8d1f6851c48"
+   },
+   "num_samples": 160434,
+   "rng": "13c06ef906ea2e7b",
+   "sups": "548d746cc8e8c958"
+  }
+ ]
+}

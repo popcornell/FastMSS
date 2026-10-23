@@ -1,0 +1,9 @@
+# @package _global_
+# Kinect-like 4-mic linear array mounted near a wall.
+# python recipes/sim.py +multichannel=kinect output_dir=... manifest_dir=...
+defaults:
+  - _common
+
+spatial:
+  devices:
+    - {preset: kinect}

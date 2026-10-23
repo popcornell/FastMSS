@@ -1,0 +1,9 @@
+# @package _global_
+# AMI-like 8-mic circular tabletop array (10 cm radius).
+# python recipes/sim.py +multichannel=ami output_dir=... manifest_dir=...
+defaults:
+  - _common
+
+spatial:
+  devices:
+    - {preset: ami}

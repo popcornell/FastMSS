@@ -25,6 +25,7 @@ Generation throughput (simulated hours per minute) as a function of the number o
 - **Noise augmentation** — add real noise (e.g. WHAM, MUSAN) at configurable SNR ranges
 - **Lhotse integration** — reads source speech from lhotse CutSets with word-level alignments; outputs lhotse-compatible manifests
 - **RTTM + NeMo manifests** — optionally generate RTTM files and NeMo-style diarization manifests
+- **Multi-channel spatial simulation** (opt-in) — AMI / NOTSOFAR-1 / Kinect arrays, CHiME-6 binaural, EasyCom-style glasses, close-talk headsets; directional talkers and mics; talkers walking and turning within an utterance; worn arrays that move with the wearer's head; diffuse noise; references aligned to a reference channel. See [Multi-channel simulation](#multi-channel-simulation)
   
 ## Installation
 
@@ -42,10 +43,20 @@ FastMSS/
 │   ├── simulator.py             # Meeting generation engine
 │   ├── hmm_turn_taking.py       # HMM turn-taking model
 │   ├── rirsimulator.py          # RIR generation via pyroomacoustics
-│   └── utils.py                 # Audio splitting, crossfading utilities
+│   ├── utils.py                 # Audio splitting, crossfading utilities
+│   └── spatial/                 # Multi-channel simulation (opt-in)
+│       ├── devices.py           # Array/device presets and geometry
+│       ├── scene.py             # Stage 3: per-room RIR banks for every device
+│       ├── motion.py            # Talker / wearer motion strategies
+│       ├── render.py            # Time-varying convolution (RIR interpolation)
+│       ├── meeting.py           # Stage 4: multi-channel meeting rendering
+│       ├── directivity.py       # Analytic directivity patterns
+│       ├── metrics.py           # GCC-PHAT, SRP-PHAT, RT60, DRR, coherence
+│       └── config.py            # `spatial` config defaults
 ├── recipes/
 │   ├── sim.py                   # Unified simulation pipeline
 │   ├── default.yaml             # Default config with sensible defaults
+│   ├── multichannel/            # Multi-channel setups (+multichannel=<name>)
 │   └── paper/                   # Configs to reproduce paper experiments
 │       ├── ts_asr/              # TS-ASR experiment configs (Table 1 & 2)
 │       └── diarization/         # Diarization experiment configs
@@ -53,6 +64,7 @@ FastMSS/
 │   ├── download_wham.sh         # Download WHAM noise dataset
 │   ├── download_otospeech.sh    # Download + prepare otoSpeech dataset
 │   └── resample_folder.py       # General audio resampling utility
+├── tests/                       # pytest suite (legacy regression, spatial checks)
 ├── setup.py
 └── requirements.txt
 ```
@@ -163,6 +175,105 @@ python recipes/sim.py \
 | `boost_overlap_factor` | Scale interruption/backchannel rates | `null` |
 | `use_markov` | Use Markov chain for state transitions | `false` |
 | `stage` | Start from this pipeline stage | `0` |
+
+## Multi-channel simulation
+
+The legacy path above (single omni mic, one random RIR per utterance) is
+untouched: any config without a `spatial` block (or `spatial.enabled: false`)
+produces bit-identical outputs. Setting `spatial.enabled: true` switches stages
+3 and 4 to the multi-channel pipeline:
+
+```bash
+# AMI-like tabletop array (8 ch); also: notsofar1, kinect, chime6, easycom, closetalk
+python recipes/sim.py +multichannel=ami \
+    output_dir=./output/mc_ami manifest_dir=<MANIFEST_DIR> \
+    add_noise=true 'noise_folders=[<NOISE_DIR>]' save_spk=true save_anechoic=true
+
+# any spatial key can be overridden, e.g. more walking and dumping all channels
+python recipes/sim.py +multichannel=easycom ... spatial.motion.move_prob=0.5 spatial.reference.dump=all
+```
+
+**Devices** (`spatial.devices`, one recording per device when there are several):
+
+| Preset | Channels | Placement | Notes |
+|--------|----------|-----------|-------|
+| `single` | 1 | anywhere | omni, legacy-like |
+| `circular` | `n_mics` (+center) | table | generic; `radius`, `n_mics`, `center_mic` |
+| `ami` | 8 | table | 10 cm radius circle |
+| `notsofar1` | 7 | table | 6 on a circle + center (radius approximate) |
+| `kinect` | 4 | wall | linear array, Kinect v1 spacing, `wall_dist` 0.1-0.5 m |
+| `binaural_worn` | 2 | head | CHiME-6-style in-ear mics, worn by a talker or a listener |
+| `glasses` | 6 | head | EasyCom-style: 4 frame + 2 in-ear (positions approximate) |
+| `closetalk` | 1 per talker | mouth | headset mic per talker, with cross-talk |
+
+Every preset field can be overridden inline (`offsets`, `mic_pattern`,
+`mic_orientation`, `ref_channel`, `height`, ...). Approximate geometries are
+marked in `fastmss/spatial/devices.py`.
+
+**How it works**
+
+- *Stage 3* precomputes, for each room, a RIR bank per device:
+  - **talker nodes**, each with `n_orient` yaw bins for directional talkers;
+  - **walking paths** between nodes, every `traj_step` m;
+  - **wearer seats** with `n_yaw` head-yaw bins and the matching mouth positions;
+  - **4 noise sources** in the corners, aimed at the corners.
+
+  Reverberant and direct-path (`max_order=0`) RIRs are stored for every
+  channel in `rirs/room_<id>/<device>.npy` (+ `scene.json`). The bank grows
+  with devices × poses × sources × channels, and the size is logged before
+  stage 3 starts. Worn devices are the expensive ones (one mic pose per
+  seat × yaw).
+- *Stage 4* moves talkers between utterances with one of these strategies:
+  - `spatial.motion.inter`: `random` (legacy-like), `static`, or `random_walk`
+    (within `max_position_change`).
+
+  Within an utterance, with probability `move_prob`, talkers can also move:
+  - `spatial.motion.intra`: `walk` along a path at a speed in `speed_range`,
+    `rotate`, or `walk_rotate`.
+
+  Wearers turn their heads toward the active talker (`head_turn_prob`).
+  Rendering interpolates in time between the precomputed RIRs: the input is
+  split with triangular weights and the overlap-added results are summed. A
+  static talker therefore reduces exactly to the legacy convolution.
+- **References**: each utterance is shifted so that the direct sound at the
+  reference channel (`reference.channel`, default the device's `ref_channel`;
+  for close-talk, each talker's own headset) lands at the supervision start.
+  All channels share the shift, so inter-channel delays are kept. Speaker
+  dumps (`save_spk`, `save_anechoic`) can be the reverberant, direct-path
+  (`-anechoic`) and/or early (`-early`, direct + `early_ms`) images, written
+  for the reference channel (`reference.dump: ref`) or for every channel
+  (`all`).
+- **Noise**: `spatial.noise.type: diffuse` plays the sampled noise clip
+  through the 4 corner sources, `mono` adds it to every channel as in the
+  legacy path. With `signal: same` (the default), every source plays the
+  identical clip. One signal through fixed filters stays fully coherent
+  across mics, so the field is not more diffuse than a single source. Use
+  `signal: shifted` (time-shifted copies of the same clip) for a genuinely
+  more diffuse field.
+- Supervisions carry `custom.spatial` (device, start/end position, moving or
+  rotating flags, start yaw, close-talk channel).
+
+**Limitations**
+
+- Walking talkers can only follow the precomputed paths.
+- Wearers do not change seat during a meeting.
+- For a walking talker, the cross-talk into their own close-talk headset
+  uses the nearest node's RIR.
+- RIR interpolation between path points `traj_step` apart can add mild comb
+  filtering at high frequencies while moving. A smaller `traj_step` reduces
+  it, at the cost of a bigger bank.
+
+**Tests**: `python -m pytest tests/` covers:
+- a bit-exact legacy regression;
+- the time-varying renderer;
+- GCC-PHAT TDOA and SRP-PHAT DOA against geometry, including moving talkers
+  and rotating heads;
+- directivity patterns and the bank's orientation bins;
+- RT60 and diffuse coherence;
+- dumped references aligned with the mixture's reference channel.
+
+`tests/plot_scene.py <scene.json>` draws the room, the directivity check and
+a moving-talker TDOA track.
 
 ## Turn-Taking Model
 

@@ -1,0 +1,40 @@
+# @package _global_
+# Shared settings of the multi-channel recipes; included by the others.
+reverberate: true
+reverb_prob: 1.0
+n_rirs: 200          # rooms; each stores a bank per device (see stage-3 storage log)
+n_pos_rirs: 30       # talker positions per room
+rt60: [0.2, 0.7]
+room_sz: [5, 10]
+room_ceiling: [2.7, 3.5]
+
+# every spatial key is listed so that any of them can be overridden from the CLI
+# (defaults and documentation: fastmss/spatial/config.py)
+spatial:
+  enabled: true
+  source_directivity: {pattern: cardioid, n_orient: 4}
+  face: group
+  wearer: speaker
+  n_wearer_seats: 1
+  n_yaw: 8
+  mouth_offset: [0.09, 0.0, -0.07]
+  closetalk_offset: [0.03, 0.0, -0.02]
+  node_height: [1.0, 1.8]
+  head_height: [1.1, 1.3]
+  min_dist_device: 1.0
+  n_trajectories: 10
+  traj_len: [1.0, 4.0]
+  traj_step: 0.05
+  rir_max_len: 1.0
+  rir_dtype: float16
+  motion:
+    inter: random_walk
+    max_position_change: 0.5
+    intra: walk_rotate
+    move_prob: 0.2
+    speed_range: [0.3, 1.2]
+    rotate_range: [30.0, 120.0]
+    head_turn_prob: 0.5
+    head_jitter: 20.0
+  noise: {type: diffuse, signal: same, n_sources: 4, pattern: hypercardioid, corner_dist: 1.0}
+  reference: {channel: null, dump: ref, type: direct, early_ms: 50.0}

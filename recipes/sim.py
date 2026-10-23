@@ -24,6 +24,7 @@ from tqdm import tqdm
 
 from fastmss.rirsimulator import RIRSimulator
 from fastmss.simulator import ConversationalMeetingSimulator
+from fastmss.spatial import SceneBankSimulator, SpatialMeetingSimulator, spatial_enabled
 from fastmss.utils import split_monocuts_batch
 
 logging.basicConfig(level=logging.INFO)
@@ -43,6 +44,15 @@ def _worker_init(cfg, output_dir, rirs, noise_files, base_seed):
     random.seed(worker_seed)
 
     global _simulator
+    if spatial_enabled(cfg):
+        _simulator = SpatialMeetingSimulator(
+            cfg,
+            Path(output_dir).absolute() / Path("audio"),
+            _global_spk2cuts,
+            scenes=rirs,
+            noise_files=noise_files,
+        )
+        return
     _simulator = ConversationalMeetingSimulator(
         cfg,
         Path(output_dir).absolute() / Path("audio"),
@@ -336,7 +346,37 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------ #
     # Stage 3: RIR simulation  (-> rir_dir)
     # ------------------------------------------------------------------ #
-    if cfg.stage <= 3 and cfg.reverberate:
+    if cfg.stage <= 3 and spatial_enabled(cfg):
+        # spatial mode: per-room multi-device RIR banks (always needed, the
+        # direct-path banks are used for anechoic rendering too)
+        if _is_done(Path(rir_dir) / ".done_stage3_spatial"):
+            logger.info("Stage 3 (spatial) already done (found .done_stage3_spatial in rir_dir), skipping.")
+        else:
+            from copy import deepcopy
+
+            from omegaconf import OmegaConf
+
+            rir_cfg = deepcopy(cfg)
+            OmegaConf.update(rir_cfg, "output_dir", rir_dir)
+            simulator = SceneBankSimulator(rir_cfg)
+            est = simulator.estimate_storage()
+            logger.info(
+                f"Simulating spatial RIR banks: up to ~{est / 2**20:.0f} MB per room, "
+                f"~{est * cfg.n_rirs / 2**30:.1f} GB for {cfg.n_rirs} rooms."
+            )
+            room_ids = iter([f"room_{x}" for x in range(cfg.n_rirs)])
+            all_scenes = []
+            for c_scene in tqdm(
+                parallel_map(simulator.gen_scene, room_ids, num_jobs=cfg.n_jobs),
+                total=cfg.n_rirs,
+                desc="Simulating spatial RIR banks",
+            ):
+                all_scenes.append(c_scene)
+            Path(rir_dir).mkdir(parents=True, exist_ok=True)
+            with open(os.path.join(rir_dir, "all_scenes.json"), "w") as f:
+                json.dump(all_scenes, f, indent=4)
+            _mark_done(Path(rir_dir) / ".done_stage3_spatial")
+    elif cfg.stage <= 3 and cfg.reverberate:
         if _is_done(Path(rir_dir) / ".done_stage3"):
             logger.info("Stage 3 already done (found .done_stage3 in rir_dir), skipping.")
         else:
@@ -389,7 +429,10 @@ def main(cfg: DictConfig) -> None:
         else:
             noise_files = None
 
-        if cfg.reverberate:
+        if spatial_enabled(cfg):
+            with open(os.path.join(rir_dir, "all_scenes.json"), "r") as f:
+                rirs = json.load(f)
+        elif cfg.reverberate:
             out_file = os.path.join(rir_dir, "all_rooms.json")
             with open(out_file, "r") as f:
                 rirs = json.load(f)
@@ -427,7 +470,11 @@ def main(cfg: DictConfig) -> None:
         ctx = mp.get_context("fork")  # fork is required so workers inherit _global_spk2cuts
         with ctx.Pool(processes=cfg.n_jobs, initializer=_worker_init, initargs=init_args) as pool:
              for c_rec, c_sup in tqdm(pool.imap_unordered(_worker_gen_audio, uuids), total=cfg.n_meetings, desc="Simulating meetings"):
-                 recordings.append(c_rec)
+                 # spatial mode with several devices returns one recording per device
+                 if isinstance(c_rec, list):
+                     recordings.extend(c_rec)
+                 else:
+                     recordings.append(c_rec)
                  supervisions.extend(c_sup)
                  
         supervisions = SupervisionSet(supervisions)
@@ -499,6 +546,8 @@ def main(cfg: DictConfig) -> None:
                             str(sup.speaker) if sup.speaker is not None else "unknown"
                         )
                         channel = sup.channel
+                        if isinstance(channel, (list, tuple)):  # multi-channel
+                            channel = channel[0]
 
                         if sup.alignment and "word" in sup.alignment:
                             for item in sup.alignment["word"]:

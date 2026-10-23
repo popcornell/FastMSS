@@ -286,13 +286,27 @@ class ConversationalMeetingSimulator:
         return noisy_audio
 
     def add_real_noise(self, audio, min_speech_level_db, range_db_offset=(-15, 3)):
-        # Check if multi-noise sampling is enabled
-        multi_noise_enabled = getattr(self.cfg, "multi_noise_sampling", True)
-
         if len(audio) == 0:
             return audio
 
-        tgt_len = audio.shape[-1]
+        c_noise = self.sample_noise_signal(audio.shape[-1])
+
+        # Calculate maximum allowed noise level (5 dB below min speech level)
+        max_noise_level_db = min_speech_level_db + np.random.uniform(*range_db_offset)
+
+        # Apply target noise level (gain)
+        noise_rms = 10 ** (max_noise_level_db / 20.0)
+        c_noise = c_noise * noise_rms
+
+        # Add noise to signal
+        noisy_audio = audio + c_noise
+
+        return noisy_audio
+
+    def sample_noise_signal(self, tgt_len):
+        """Sample a mono, unit-RMS noise signal of tgt_len samples from noise_files."""
+        # Check if multi-noise sampling is enabled
+        multi_noise_enabled = getattr(self.cfg, "multi_noise_sampling", True)
 
         if multi_noise_enabled:
             # Sample multiple noise files to cover the entire meeting duration
@@ -392,17 +406,7 @@ class ConversationalMeetingSimulator:
             rms = np.sqrt(np.mean(c_noise**2))
             c_noise = c_noise / (rms + 1e-8)
 
-        # Calculate maximum allowed noise level (5 dB below min speech level)
-        max_noise_level_db = min_speech_level_db + np.random.uniform(*range_db_offset)
-
-        # Apply target noise level (gain)
-        noise_rms = 10 ** (max_noise_level_db / 20.0)
-        c_noise = c_noise * noise_rms
-
-        # Add noise to signal
-        noisy_audio = audio + c_noise
-
-        return noisy_audio
+        return c_noise
 
     def normalize_to(self, audio, target_level_db):
         """
@@ -440,13 +444,43 @@ class ConversationalMeetingSimulator:
 
         return normalized_audio, gain
 
-    def gen_audio(self, indx):
+    def _resolve_cfg(self):
         # Resolve OmegaConf to SimpleNamespace once to avoid __getattr__ overhead
         if not isinstance(self.cfg, SimpleNamespace):
             from omegaconf import OmegaConf
 
             self.cfg = SimpleNamespace(**OmegaConf.to_container(self.cfg, resolve=True))
 
+    def gen_audio(self, indx):
+        self._resolve_cfg()
+
+        # Conditional FIR: only create fir_highpass if use_fir is True
+        fir_highpass = self.create_fir_highpass(40, 63) if self.cfg.use_fir else None
+        room = {}
+
+        def pick_room(sampled_spk):
+            if self.rirs is not None:
+                room["rirs"] = self.rirs[np.random.randint(0, len(self.rirs))]
+
+        timeline = self._sample_timeline(pre_loop_hook=pick_room)
+        output_audio, spk2audio, spk2audio_anechoic = self._render_legacy(
+            timeline, room.get("rirs"), fir_highpass
+        )
+
+        # Generate unique filename
+        recording_id = str(uuid4())
+        recording = self._write_outputs(
+            recording_id, output_audio, spk2audio, spk2audio_anechoic
+        )
+        supervisions = self._build_supervisions(recording_id, timeline)
+        return recording, supervisions
+
+    def _sample_timeline(self, pre_loop_hook=None):
+        """Sample speakers, utterances, offsets and levels of one meeting.
+
+        pre_loop_hook(sampled_spk) is called right after the speakers are drawn
+        and before the turn-taking loop (legacy: picks the RIR room there, which
+        fixes the RNG call order)."""
         min_spk, max_spk = self.cfg.min_max_spk
         n_speakers = np.random.randint(min_spk, max_spk + 1)
         target_dur = self.cfg.duration
@@ -465,12 +499,8 @@ class ConversationalMeetingSimulator:
         offsets = []
         transition_types = []
 
-        # Conditional FIR: only create fir_highpass if use_fir is True
-        if self.cfg.use_fir:
-            fir_highpass = self.create_fir_highpass(40, 63)
-
-        if self.rirs is not None:
-            c_room_rirs = self.rirs[np.random.randint(0, len(self.rirs))]
+        if pre_loop_hook is not None:
+            pre_loop_hook(sampled_spk)
 
         while current_time < target_dur or len(seen_speakers) < len(sampled_spk):
 
@@ -555,6 +585,22 @@ class ConversationalMeetingSimulator:
         for _ in utterances:
             c_gain = np.random.uniform(*self.cfg.rel_gain)
             speech_lvls.append(base_gain + c_gain)
+
+        return SimpleNamespace(
+            sampled_spk=sampled_spk,
+            utterances=utterances,
+            offsets=offsets,
+            transition_types=transition_types,
+            speech_lvls=speech_lvls,
+            current_time=current_time,
+        )
+
+    def _render_legacy(self, timeline, c_room_rirs, fir_highpass):
+        """Single-channel rendering: random RIR of the room per utterance."""
+        utterances = timeline.utterances
+        offsets = timeline.offsets
+        speech_lvls = timeline.speech_lvls
+        current_time = timeline.current_time
 
         # fetch the maximum length
         output_audio = np.zeros((1, int(current_time * self.cfg.samplerate)))
@@ -695,8 +741,15 @@ class ConversationalMeetingSimulator:
                     for k in spk2audio_anechoic.keys():
                         spk2audio_anechoic[k] = spk2audio_anechoic[k] * gain_f
 
-        # Generate unique filename
-        recording_id = str(uuid4())
+        return output_audio, spk2audio, spk2audio_anechoic
+
+    def _write_outputs(
+        self, recording_id, output_audio, spk2audio, spk2audio_anechoic, extra=None
+    ):
+        """Write mixture and optional speaker dumps, return the lhotse Recording.
+
+        extra: optional {suffix: {spk: audio}} for additional per-speaker dumps
+        (e.g. "early"), written as <id>-spk-<spk>-<suffix>.wav."""
         audio_filename = f"{recording_id}.wav"
         Path(self.output_dir).mkdir(exist_ok=True)
         audio_path = os.path.join(self.output_dir, audio_filename)
@@ -720,17 +773,41 @@ class ConversationalMeetingSimulator:
                         spk2audio_anechoic[k].T,
                         self.cfg.samplerate,
                     )
+        for suffix, dumps in (extra or {}).items():
+            for k in dumps:
+                sf.write(
+                    os.path.join(
+                        self.output_dir, f"{recording_id}-spk-{k}-{suffix}.wav"
+                    ),
+                    dumps[k].T,
+                    self.cfg.samplerate,
+                )
 
         # Create Lhotse Recording
         recording = Recording(
             id=recording_id,
-            sources=[AudioSource(type="file", channels=[0], source=audio_path)],
+            sources=[
+                AudioSource(
+                    type="file",
+                    channels=list(range(output_audio.shape[0])),
+                    source=audio_path,
+                )
+            ],
             sampling_rate=self.cfg.samplerate,
             num_samples=output_audio.shape[-1],
             duration=output_audio.shape[-1] / self.cfg.samplerate,
         )
+        return recording
 
-        # Create Lhotse Supervisions for each utterance
+    def _build_supervisions(self, recording_id, timeline, channel=0, extra_custom=None):
+        """Create Lhotse Supervisions for each utterance.
+
+        extra_custom: optional list (one dict per utterance) merged into custom."""
+        utterances = timeline.utterances
+        offsets = timeline.offsets
+        transition_types = timeline.transition_types
+        speech_lvls = timeline.speech_lvls
+
         supervisions = []
         for i, (cut, offset) in enumerate(zip(utterances, offsets)):
             orig_supervision = cut.supervisions[0]
@@ -760,7 +837,7 @@ class ConversationalMeetingSimulator:
                 recording_id=recording_id,
                 start=offset,
                 duration=cut.duration,
-                channel=0,
+                channel=channel,
                 speaker=orig_supervision.speaker,
                 text=getattr(orig_supervision, "text", ""),  # Use text if available
                 language=getattr(orig_supervision, "language", None),
@@ -775,8 +852,9 @@ class ConversationalMeetingSimulator:
                     ),
                     "speech_level_db": speech_lvls[i],
                     "original_cut_id": cut.id,
+                    **(extra_custom[i] if extra_custom is not None else {}),
                 },
             )
             supervisions.append(supervision)
 
-        return recording, supervisions
+        return supervisions

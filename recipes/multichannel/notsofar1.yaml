@@ -1,0 +1,9 @@
+# @package _global_
+# NOTSOFAR-1-like 7-mic (6 + center) tabletop array.
+# python recipes/sim.py +multichannel=notsofar1 output_dir=... manifest_dir=...
+defaults:
+  - _common
+
+spatial:
+  devices:
+    - {preset: notsofar1}

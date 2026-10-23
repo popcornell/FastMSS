@@ -1,0 +1,12 @@
+# @package _global_
+# AMI-like IHM + MDM: one headset channel per talker (with cross-talk) plus the
+# tabletop array. One recording per device (<uuid>_<device>).
+# python recipes/sim.py +multichannel=closetalk output_dir=... manifest_dir=...
+defaults:
+  - _common
+
+spatial:
+  devices:
+    - {preset: closetalk}
+    - {preset: ami}
+  reference: {dump: ref}   # closetalk reference = each talker's own headset
