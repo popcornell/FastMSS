@@ -60,6 +60,62 @@ def test_fitted_geometry():
     assert raw["fit_rms"] < 6.0  # samples at 48 kHz (head diffraction)
 
 
+# Frame mic positions from the EasyCom README (mm, tracked-pose frame:
+# X left, Y up, Z forward), converted to the device frame (x fwd, y left, z up).
+_DOC_MICS = np.array([[82, -5, -29], [-1, -1, 30], [-77, -2, 11], [-83, -5, -60]], float)
+DOC_FRAME_MICS = np.stack([_DOC_MICS[:, 2], _DOC_MICS[:, 0], _DOC_MICS[:, 1]], 1) / 1000
+
+
+def _band_energy_db(raw, lo, hi):
+    """Energy [ch, dir] in dB of the raw measured IRs in a frequency band."""
+    H = np.abs(np.fft.rfft(raw["ir"], axis=-1)) ** 2
+    f = np.fft.rfftfreq(raw["ir"].shape[-1], 1 / raw["fs"])
+    return 10 * np.log10(H[..., (f > lo) & (f < hi)].sum(-1))
+
+
+def test_azimuth_convention_matches_documented_ears():
+    """Phi convention (0 = forward, counter-clockwise = left) checked against
+    the documented channel labels ("Channel 5 is the left ear"), using level
+    only (independent of the delay fit): the left ear is louder for sources
+    on the left. A clockwise Phi would flip every sign."""
+    raw = load_raw(ATF)
+    u = raw["u"]
+    ild = (lambda E: E[LEFT] - E[RIGHT])(_band_energy_db(raw, 3000, 10000))
+    horiz = np.abs(u[:, 2]) < np.sin(np.deg2rad(20))
+    left = horiz & (u[:, 1] > 0.7)
+    right = horiz & (u[:, 1] < -0.7)
+    assert left.sum() > 10 and right.sum() > 10
+    assert np.median(ild[left]) > 3.0 and np.median(ild[right]) < -10.0, (np.median(ild[left]), np.median(ild[right]))
+    assert np.mean(ild[left] > 0) > 0.9 and np.mean(ild[right] < 0) > 0.9
+
+
+def test_frame_mics_match_documented_positions():
+    """Fitted frame mic positions = README mic table (up to a translation:
+    the table is relative to the tracking markers). A mirrored azimuth would
+    put the mics on the wrong side. Also checks the documented clockwise
+    order (top-down) of channels 1-4."""
+    off = load_raw(ATF)["offsets"][:4]
+    a = off - off.mean(0)
+    b = DOC_FRAME_MICS - DOC_FRAME_MICS.mean(0)
+    err = np.sqrt(np.mean(np.sum((a - b) ** 2, 1)))
+    err_mirror = np.sqrt(np.mean(np.sum((a - b * [1, -1, 1]) ** 2, 1)))
+    assert err < 0.03 and err_mirror > 4 * err, (err, err_mirror)
+    # clockwise seen from above (z up) = decreasing angle in the x-y plane
+    ang = np.unwrap(np.arctan2(a[:, 1], a[:, 0]))
+    assert np.all(np.diff(ang) < 0), np.degrees(ang)
+
+
+def test_elevation_convention():
+    """Theta = 0 is up: the unmeasured cap is below (torso / stand), and
+    sources from below are shadowed by the torso."""
+    raw = load_raw(ATF)
+    theta = np.degrees(np.arccos(raw["u"][:, 2]))
+    assert theta.min() < 10 and theta.max() < 165  # gap at the bottom only
+    E = _band_energy_db(raw, 2000, 10000)
+    above, below = theta < 60, theta > 120
+    assert E[:, above].mean() - E[:, below].mean() > 1.5
+
+
 @pytest.mark.parametrize("yaw_deg", [0.0, 90.0, 215.0])
 def test_rotation_selects_measured_direction(yaw_deg):
     """Free-field render through the rotated directivities = measured IR of the
