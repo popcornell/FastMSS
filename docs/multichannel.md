@@ -39,6 +39,7 @@ python recipes/sim.py +multichannel=ami output_dir=<OUT> manifest_dir=<MANIFESTS
 | `kinect` | 4-channel linear array on a wall |
 | `chime6` | binaural in-ear pair worn by a talker |
 | `easycom` | 6-channel glasses worn by a talker |
+| `mmcsg` | glasses with measured EasyCom ATFs worn by one of two talkers (needs `atf_path=`) |
 | `closetalk` | one headset per talker and the AMI array |
 
 All recipes include `recipes/multichannel/_common.yaml`, which lists every
@@ -67,6 +68,7 @@ the side.*
 | `kinect` | 4 | wall | linear, Kinect v1 capsule positions; approximate for Kinect v2 |
 | `binaural_worn` | 2 | head | in-ear pair as in CHiME-6 |
 | `glasses` | 6 | head | 4 on the frame and 2 in-ear, after EasyCom; positions approximate |
+| `easycom_atf` | 6 | head | EasyCom glasses with their measured array transfer functions (see below) |
 | `closetalk` | 1 per talker | mouth | headset mic in front of each talker's mouth |
 
 Table placements put the array at a random point in the central 40% of the
@@ -298,6 +300,43 @@ The noise level is set as in the single-channel path: the level at the
 reference channel is the lowest speech level plus a value drawn from
 `noise_rel_gain`. `tests/test_levels.py` checks the level to within 0.01 dB.
 
+## Measured array transfer functions
+
+`easycom_atf` uses the array transfer functions (ATFs) measured on a
+head-and-torso simulator wearing the EasyCom glasses: 6 channels, 1020
+directions on a 6 degree grid, 48 kHz. Download `Device_ATFs.h5` from the
+[EasyCom repository](https://github.com/facebookresearch/EasyComDataset/tree/main/Calibration/Array%20Transfer%20Functions)
+and pass it as `atf=<path>` (or `atf_path=<path>` with the `mmcsg` recipe):
+
+```bash
+python recipes/sim.py +multichannel=mmcsg atf_path=<.../Device_ATFs.h5> output_dir=<OUT> manifest_dir=<MANIFESTS>
+```
+
+The code is in `fastmss/spatial/atf.py`. The measurement delay is removed, the
+responses are cut to 3.5 ms, resampled to `samplerate` and normalized by one
+diffuse-field gain. All channels are simulated at the head center; the ATFs
+contain the inter-channel delays, head shadowing and diffraction.
+
+- Image sources up to order `atf_order` (default 3) are filtered with the ATF
+  of the nearest measured direction, relative to the head yaw.
+- Higher orders use omnidirectional mics at the mic positions fitted to the
+  measured delays, filtered with each channel's diffuse-field response.
+  They are computed as full order minus order `atf_order`; the image-source
+  method is deterministic, so the low orders cancel exactly. With ATFs on
+  every order, the bank takes about 50 times longer.
+- Mic offsets in `scene.json` are the plane-wave fit of the measured delays
+  (residual about 5 samples at 48 kHz on the far side of the head). They are
+  metadata only.
+- The reference shift uses the measured direct-path arrival of each pose,
+  source and channel (`<device>-refdelay.npy`), not the geometric distance.
+
+The ATFs are far-field responses, so the wearer's own voice uses the ATF of
+the mouth direction seen from the head center. Near-field effects at the
+mouth are not modeled, and the in-ear channels have no single dominant
+arrival for the own voice. Directions below 156 degrees from the vertical are
+not measured and use the lowest measured ring. MMCSG was recorded with the
+7-mic Aria glasses; the EasyCom glasses differ in mic count and placement.
+
 ## Supervisions
 
 Each supervision has a `custom.spatial` field with the device, the start and
@@ -312,6 +351,7 @@ channel.
 - A walking talker's close-talk headset uses the position precomputed for the
   nearest node and yaw bin.
 - The `notsofar1` radius and the `glasses` mic positions are approximate.
+- `easycom_atf` models the wearer's own voice with far-field ATFs.
 
 ## Tests
 
@@ -327,6 +367,7 @@ python -m pytest tests/
 | `test_directivity.py` | source and mic patterns, orientation bins in the bank, DRR facing and away |
 | `test_acoustics.py` | direct-path delay, RT60, noise coherence |
 | `test_dump_alignment.py` | reference alignment, sum to the mixture, `ref` against `all` |
+| `test_atf.py` | measured ATFs: fitted geometry, head-yaw rotation, inter-channel delays against the measurement, reference alignment, head-turn TDOA track, direct sound of the reverberant bank (skipped without `Device_ATFs.h5`) |
 | `test_levels.py` | close-talk crosstalk, noise level, speech levels, `wearer: listener` |
 | `test_devices.py` | presets and device geometry |
 | `test_motion.py` | motion strategies, walking paths, wearer head schedule |

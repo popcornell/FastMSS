@@ -1,0 +1,25 @@
+# @package _global_
+# MMCSG-like egocentric conversations: one talker wears AR glasses (self-voice)
+# and talks with a partner; the glasses use the measured EasyCom array transfer
+# functions (6 ch: 4 frame mics + 2 in-ear). Note: MMCSG itself was recorded
+# with 7-mic Aria glasses; EasyCom's measured glasses are the closest public ATFs.
+#
+# Get the ATFs (Git LFS, ~39 MB):
+#   wget -O Device_ATFs.h5 "https://media.githubusercontent.com/media/facebookresearch/EasyComDataset/main/Calibration/Array%20Transfer%20Functions/Device_ATFs.h5"
+# python recipes/sim.py +multichannel=mmcsg atf_path=<.../Device_ATFs.h5> output_dir=... manifest_dir=...
+defaults:
+  - _common
+
+atf_path: ???
+min_max_spk: [2, 2]
+max_concurrent_speakers: 2
+
+spatial:
+  devices:
+    - {preset: easycom_atf, atf: "${atf_path}", atf_order: 3}
+  wearer: speaker
+  n_wearer_seats: 1
+  n_yaw: 8
+  motion:
+    head_turn_prob: 0.7
+    head_jitter: 20.0

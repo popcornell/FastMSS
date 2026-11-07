@@ -9,6 +9,7 @@ setup(
     install_requires=[
         "numpy",
         "scipy",
+        "h5py",
         "soundfile",
         "torch",
         "torchaudio",

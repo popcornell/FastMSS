@@ -184,7 +184,7 @@ single-channel path described above, and its output is unchanged. With
 recipes in `recipes/multichannel/` set up common devices:
 
 ```bash
-# 8-channel AMI-like table array; other recipes: notsofar1, kinect, chime6, easycom, closetalk
+# 8-channel AMI-like table array; other recipes: notsofar1, kinect, chime6, easycom, mmcsg, closetalk
 python recipes/sim.py +multichannel=ami \
     output_dir=./output/mc_ami manifest_dir=<MANIFEST_DIR> \
     add_noise=true 'noise_folders=[<NOISE_DIR>]' save_spk=true save_anechoic=true
@@ -202,6 +202,7 @@ python recipes/sim.py +multichannel=easycom ... spatial.motion.move_prob=0.5 spa
 | `kinect` | 4 | wall |
 | `binaural_worn` | 2 | head |
 | `glasses` | 6 | head |
+| `easycom_atf` | 6 | head (measured EasyCom ATFs, `atf=<Device_ATFs.h5>`) |
 | `closetalk` | 1 per talker | mouth |
 
 [docs/multichannel.md](docs/multichannel.md) describes the devices, the RIR

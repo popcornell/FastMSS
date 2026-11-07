@@ -62,6 +62,10 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
                 )
                 for name, meta in scene["devices"].items()
             }
+            # devices with measured ATFs: measured direct-path arrivals
+            for meta in scene["devices"].values():
+                if meta.get("ref_delay"):
+                    meta["_ref_delay"] = np.load(d / meta["ref_delay"])
             self._loaded[path] = (scene, banks)
         return self._loaded[path]
 
@@ -117,10 +121,12 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
         return pose_for_entry, headset_pose
 
     # ------------------------------------------------------------------ #
-    def _render_one(self, x, src_sched, mic_sched, bank, dbank, mic_pos, src_pos, ref_ch, want_early):
+    def _render_one(self, x, src_sched, mic_sched, bank, dbank, mic_pos, src_pos, ref_ch, want_early, ref_delay=None):
         """Render x for one device (or one closetalk channel).
 
         Schedules are [(t_seconds, key)] relative to the utterance start.
+        ref_delay: optional measured direct-path arrivals [pose, source, channel]
+        (devices with ATFs); geometric distances are used otherwise.
         Returns (rev, direct, early or None, ref_delay_at_start)."""
         fs = self.cfg.samplerate
         n = len(x)
@@ -133,7 +139,10 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
         delays = []
         for c in combos:
             w, p, s = max(c, key=lambda z: z[0])
-            delays.append(direct_delay(src_pos[s], mic_pos[p][ref_ch], fs))
+            if ref_delay is not None:
+                delays.append(float(ref_delay[p, s, ref_ch]))
+            else:
+                delays.append(direct_delay(src_pos[s], mic_pos[p][ref_ch], fs))
         rev = render(x, times, H)
         dire = render(x, times, Hd)
         early = None
@@ -207,7 +216,7 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
                 else:
                     mic_sched = [(0.0, 0)]
                 rev, dire, early, delay0 = self._render_one(
-                    x, mot.schedule, mic_sched, bank, dbank, mic_pos, src_pos, dev_ref, want_early
+                    x, mot.schedule, mic_sched, bank, dbank, mic_pos, src_pos, dev_ref, want_early, meta.get("_ref_delay")
                 )
                 ref = dev_ref
 

@@ -11,6 +11,8 @@ Layout of ``<rir_dir>/rirs/room_<id>/``:
     scene.json            -- geometry + index maps (see SceneBankSimulator.gen_scene)
     <device>.npy          -- reverberant bank, shape [n_poses, n_sources, n_ch, L]
     <device>-direct.npy   -- direct-path bank, shape [n_poses, n_sources, n_ch, Ld]
+    <device>-refdelay.npy -- devices with measured ATFs only: direct-path arrival
+                             per [pose, source, channel] (fractional samples)
 """
 
 import json
@@ -20,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import pyroomacoustics
 
+from .atf import diffuse_filters, load_atf, make_atf_directivities, phat_delay
 from .config import get_spatial_cfg
 from .devices import build_devices, rot_z
 from .directivity import is_omni, make_directivity
@@ -140,8 +143,10 @@ class SceneBankSimulator:
     # ------------------------------------------------------------------ #
     # RIR computation
     # ------------------------------------------------------------------ #
-    def _compute(self, room_dim, e_absorption, max_order, src_pos, src_dir, mic_pos, mic_dir, length):
+    def _compute(self, room_dim, e_absorption, max_order, src_pos, src_dir, mic_pos, mic_dir, length, rand_ism=None):
         """RIRs for all (mic, source) pairs -> float32 [n_mics, n_src, length]."""
+        if rand_ism is None:
+            rand_ism = self.cfg.use_rand_ism
         n_mic, n_src = len(mic_pos), len(src_pos)
         out = np.zeros((n_mic, n_src, length), dtype=np.float32)
         for m0 in range(0, n_mic, MIC_CHUNK):
@@ -153,7 +158,7 @@ class SceneBankSimulator:
                     fs=self.cfg.samplerate,
                     max_order=max_order,
                     materials=pyroomacoustics.Material(e_absorption),
-                    use_rand_ism=self.cfg.use_rand_ism if max_order > 0 else False,
+                    use_rand_ism=rand_ism if max_order > 0 else False,
                     max_rand_disp=self.cfg.rand_disp,
                 )
                 dirs = mic_dir[m0:m1]
@@ -171,6 +176,38 @@ class SceneBankSimulator:
                     for si in range(s1 - s0):
                         r = room.rir[mi][si][:length]
                         out[m0 + mi, s0 + si, : len(r)] = r
+        return out
+
+    def _compute_atf(self, d, room_dim, e_absorption, max_order, src_pos, src_dir, poses, length):
+        """Banks of a device with measured ATFs -> float32 [n_poses * n_ch, n_src, length].
+
+        Image sources up to ``d.atf_order`` are filtered with the measured ATFs
+        (all channels at the head center, the ATFs carry the inter-channel
+        delays). Higher orders use omni mics at the fitted mic positions
+        (full order minus order <= atf_order; the image-source method is
+        deterministic, so the low orders cancel exactly) and the per-channel
+        diffuse-field response of the ATFs."""
+        from scipy.signal import fftconvolve
+
+        fs = self.cfg.samplerate
+        n_ch = d.n_mics
+        shift = int(round(load_atf(d.atf, fs)["pre"]))
+        k = min(int(d.atf_order), int(max_order))
+        h_diff = diffuse_filters(d.atf, fs)
+        out = np.zeros((len(poses) * n_ch, len(src_pos), length), dtype=np.float32)
+        for pi, pose in enumerate(poses):
+            centers = [pose["center"]] * n_ch
+            dirs = make_atf_directivities(d.atf, fs, pose["yaw"])
+            rir = self._compute(room_dim, e_absorption, k, src_pos, src_dir, centers, dirs, length + shift)[..., shift:]
+            if max_order > k:
+                eff = list(np.asarray(pose["mic_pos"]))
+                omni = [None] * n_ch
+                late = self._compute(room_dim, e_absorption, max_order, src_pos, src_dir, eff, omni, length, rand_ism=False)
+                late -= self._compute(room_dim, e_absorption, k, src_pos, src_dir, eff, omni, length, rand_ism=False)
+                for m in range(n_ch):
+                    late[m] = fftconvolve(late[m], h_diff[m][None, :], mode="same", axes=-1)
+                rir += late
+            out[pi * n_ch : (pi + 1) * n_ch] = rir
         return out
 
     # ------------------------------------------------------------------ #
@@ -356,12 +393,23 @@ class SceneBankSimulator:
                 mic_dir.extend(make_directivity(d.mic_pattern, a, c) for a, c in zip(az, col))
             n_ch = d.n_mics
             P = len(poses)
-            rev = self._compute(room_dim, e_absorption, max_order, src_pos, src_dir, mic_pos, mic_dir, L)
-            dirp = self._compute(room_dim, e_absorption, 0, src_pos, src_dir, mic_pos, mic_dir, Ld)
+            if d.atf is not None:
+                rev = self._compute_atf(d, room_dim, e_absorption, max_order, src_pos, src_dir, poses, L)
+                dirp = self._compute_atf(d, room_dim, e_absorption, 0, src_pos, src_dir, poses, Ld)
+            else:
+                rev = self._compute(room_dim, e_absorption, max_order, src_pos, src_dir, mic_pos, mic_dir, L)
+                dirp = self._compute(room_dim, e_absorption, 0, src_pos, src_dir, mic_pos, mic_dir, Ld)
             rev = rev.reshape(P, n_ch, n_src, L).transpose(0, 2, 1, 3)
             dirp = dirp.reshape(P, n_ch, n_src, Ld).transpose(0, 2, 1, 3)
             np.save(out_dir / f"{d.name}.npy", np.ascontiguousarray(rev.astype(dtype)))
             np.save(out_dir / f"{d.name}-direct.npy", np.ascontiguousarray(dirp.astype(dtype)))
+            extra = {}
+            if d.atf is not None:
+                # head diffraction and the near-field mouth make geometric delays
+                # inexact: measure the direct-path arrival on the stored bank
+                rd = phat_delay(np.ascontiguousarray(dirp.astype(dtype)).astype(np.float32), fs)
+                np.save(out_dir / f"{d.name}-refdelay.npy", rd.astype(np.float32))
+                extra = {"atf": d.atf, "atf_order": int(d.atf_order), "ref_delay": f"{d.name}-refdelay.npy"}
             dev_meta[d.name] = {
                 "preset": d.name,
                 "placement": d.placement,
@@ -372,6 +420,7 @@ class SceneBankSimulator:
                 "poses": poses,
                 "bank": f"{d.name}.npy",
                 "direct_bank": f"{d.name}-direct.npy",
+                **extra,
             }
 
         scene = {

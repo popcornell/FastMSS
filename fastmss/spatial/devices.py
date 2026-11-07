@@ -38,6 +38,11 @@ class DeviceSpec:
     height: List[float] = field(default_factory=lambda: [0.7, 1.0])
     # wall placement: distance of the array from the wall (metres)
     wall_dist: List[float] = field(default_factory=lambda: [0.1, 0.5])
+    # measured array transfer functions (worn devices, see atf.py): path to the
+    # HDF5 file and the highest image-source order rendered with them (later
+    # reflections use omni mics at the fitted positions + diffuse-field filter)
+    atf: Optional[str] = None
+    atf_order: int = 3
 
     @property
     def n_mics(self):
@@ -176,6 +181,22 @@ def _glasses(p):
     )
 
 
+def _easycom_atf(p):
+    # EasyCom AR glasses with their measured ATFs (Device_ATFs.h5 from
+    # github.com/facebookresearch/EasyComDataset, Calibration/Array Transfer
+    # Functions): 4 frame mics + 2 in-ear (channels 4 = left, 5 = right).
+    # Offsets are the plane-wave fit of the measured delays (metadata only).
+    from .atf import atf_offsets
+
+    path = p.get("atf")
+    if not path:
+        raise ValueError(
+            "preset easycom_atf needs atf=<path to Device_ATFs.h5> (download from "
+            "https://github.com/facebookresearch/EasyComDataset/tree/main/Calibration/Array%20Transfer%20Functions)"
+        )
+    return dict(offsets=atf_offsets(str(path)), placement="head", atf=str(path))
+
+
 def _closetalk(p):
     # One headset mic per speaker; offset handled per speaker by the scene.
     return dict(offsets=np.zeros((1, 3)), placement="mouth")
@@ -189,10 +210,11 @@ PRESETS = {
     "kinect": _kinect,
     "binaural_worn": _binaural_worn,
     "glasses": _glasses,
+    "easycom_atf": _easycom_atf,
     "closetalk": _closetalk,
 }
 
-_SPEC_KEYS = ("placement", "ref_channel", "mic_pattern", "mic_orientation", "height", "wall_dist")
+_SPEC_KEYS = ("placement", "ref_channel", "mic_pattern", "mic_orientation", "height", "wall_dist", "atf", "atf_order")
 
 
 def build_device(conf, default_name=None) -> DeviceSpec:
@@ -210,6 +232,8 @@ def build_device(conf, default_name=None) -> DeviceSpec:
     spec = DeviceSpec(name=conf.get("name", default_name or preset), **kw)
     if spec.placement not in PLACEMENTS:
         raise ValueError(f"Unknown placement {spec.placement}")
+    if spec.atf is not None and spec.placement != "head":
+        raise ValueError(f"{spec.name}: measured ATFs are only supported for worn (head) devices")
     if not 0 <= spec.ref_channel < spec.n_mics:
         raise ValueError(f"ref_channel {spec.ref_channel} out of range for {spec.name}")
     return spec

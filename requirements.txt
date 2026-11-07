@@ -6,6 +6,7 @@ pyroomacoustics
 tqdm
 soundfile
 scipy
+h5py
 numpy
 omegaconf
 urllib3
