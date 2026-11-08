@@ -43,6 +43,20 @@ SPATIAL_DEFAULTS = {
         "pattern": "hypercardioid",
         "corner_dist": 1.0,
     },
+    # replay real conversations (one talker per recording/channel) with their
+    # original timing instead of the HMM timeline (see replay.py)
+    "replay": {
+        "enabled": False,
+        "conv_regex": "^(.*)-[AB]$",  # recording id -> conversation id (group 1)
+        "min_speakers": 2,
+        "max_speakers": None,
+        "chunk": None,  # seconds per output item; null = whole conversation
+        "min_chunk": None,  # drop a last chunk shorter than this (default chunk / 2)
+        "max_items": None,  # null = all
+        "min_gap": 0.3,  # pause (s) where a talker's channel can be cut into pieces
+        "xfade": 0.02,  # s, overlap of consecutive pieces
+        "level": "mic",  # mic | source (keep acoustic level differences)
+    },
     "reference": {
         "channel": None,  # null = device ref_channel
         "dump": "ref",  # ref | all

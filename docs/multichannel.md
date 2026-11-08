@@ -337,6 +337,50 @@ arrival for the own voice. Directions below 156 degrees from the vertical are
 not measured and use the lowest measured ring. MMCSG was recorded with the
 7-mic Aria glasses; the EasyCom glasses differ in mic count and placement.
 
+## Replaying real conversations
+
+With `spatial.replay.enabled=true`, stage 4 does not sample an HMM timeline.
+It renders real conversations with their original timing, for example Fisher
+calls, where each side of the call has its own recording:
+
+```bash
+python recipes/sim.py +multichannel=mmcsg atf_path=<Device_ATFs.h5> \
+    manifest_dir=<FISHER_MANIFESTS> manifest_prefix=<PREFIX> ... \
+    spatial.replay.enabled=true spatial.replay.chunk=600
+```
+
+- A side is one (recording, channel) with one talker. Sides whose recording
+  ids have the same first group of `conv_regex` (default `^(.*)-[AB]$`, the
+  Fisher `fe_03_00001-A` / `-B` naming) form one conversation. A
+  multi-channel recording with one talker per channel is a conversation by
+  itself.
+- Each item is a whole conversation, or a chunk of `chunk` seconds of it. The
+  recording id is `<conversation>_<start>_<end>` (in units of 10 ms).
+- The whole channel of every talker is rendered: speech, breaths, laughter,
+  unannotated backchannels and silence.
+- Each channel is cut into contiguous pieces at the middle of the talker's
+  pauses longer than `min_gap`. The pieces are the utterances of the motion
+  planner, so talkers move, turn, and wearers turn their head between turns.
+  Neighbouring pieces overlap by `xfade` seconds with complementary fades, so
+  the dry pieces add up exactly to the original channel; each piece keeps its
+  reverberant tail.
+- Each talker gets one gain for the whole item. With `level: mic`, the
+  talker's reverberant image at the reference channel, measured over its
+  speech, is normalized to a level drawn from `base_gain` + `rel_gain`. With
+  `level: source`, the dry speech is normalized instead, so the level
+  differences caused by the acoustics are kept (the glasses wearer's own voice
+  is louder than the partner), and one common scale sets the mean level.
+- The supervisions are the original ones, with their word alignments, shifted
+  to the item start and clipped to it. Their `custom` field holds the original
+  ids, the conversation id, the window, the talker level, `is_wearer`, and the
+  `spatial` metadata of the piece where the supervision starts. Word times can
+  be relative to the cut or to the recording in the source manifest; for each
+  supervision, the reading that puts the words inside it is used.
+- The direct sound at the reference channel is aligned with the original
+  timing at the start of each piece. A talker who walks during a piece shifts
+  by the propagation delay of the distance walked, a few milliseconds at
+  walking speed.
+
 ## Supervisions
 
 Each supervision has a `custom.spatial` field with the device, the start and
@@ -352,6 +396,8 @@ channel.
   nearest node and yaw bin.
 - The `notsofar1` radius and the `glasses` mic positions are approximate.
 - `easycom_atf` models the wearer's own voice with far-field ATFs.
+- Replay: pieces are aligned at their start, and a piece starts in the middle
+  of the preceding pause, so a talker can walk for some time before speaking.
 
 ## Tests
 
@@ -368,6 +414,7 @@ python -m pytest tests/
 | `test_acoustics.py` | direct-path delay, RT60, noise coherence |
 | `test_dump_alignment.py` | reference alignment, sum to the mixture, `ref` against `all` |
 | `test_atf.py` | measured ATFs: fitted geometry, head-yaw rotation, inter-channel delays against the measurement, reference alignment, head-turn TDOA track, direct sound of the reverberant bank (skipped without `Device_ATFs.h5`) |
+| `test_replay.py` | replay: grouping of sides, word time base, pieces rebuild the channel, original timing of the direct-path dumps (static and moving), supervisions, one gain per talker, `level: source` keeps the wearer's voice louder |
 | `test_levels.py` | close-talk crosstalk, noise level, speech levels, `wearer: listener` |
 | `test_devices.py` | presets and device geometry |
 | `test_motion.py` | motion strategies, walking paths, wearer head schedule |

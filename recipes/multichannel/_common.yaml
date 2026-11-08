@@ -38,3 +38,16 @@ spatial:
     head_jitter: 20.0
   noise: {type: diffuse, signal: same, n_sources: 4, pattern: hypercardioid, corner_dist: 1.0}
   reference: {channel: null, dump: ref, type: direct, early_ms: 50.0}
+  # replay real conversations (one talker per recording/channel, e.g. Fisher
+  # sides) with their original timing instead of the HMM: spatial.replay.enabled=true
+  replay:
+    enabled: false
+    conv_regex: "^(.*)-[AB]$"
+    min_speakers: 2
+    max_speakers: null
+    chunk: null
+    min_chunk: null
+    max_items: null
+    min_gap: 0.3
+    xfade: 0.02
+    level: mic

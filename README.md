@@ -191,6 +191,9 @@ python recipes/sim.py +multichannel=ami \
 
 # any spatial key can be overridden, for example
 python recipes/sim.py +multichannel=easycom ... spatial.motion.move_prob=0.5 spatial.reference.dump=all
+
+# replay real two-sided conversations (e.g. Fisher) with their original timing, no HMM
+python recipes/sim.py +multichannel=mmcsg atf_path=<Device_ATFs.h5> ... spatial.replay.enabled=true spatial.replay.chunk=600
 ```
 
 | Preset | Channels | Placement |

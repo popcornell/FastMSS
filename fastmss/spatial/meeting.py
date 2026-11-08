@@ -221,11 +221,14 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
                 ref = dev_ref
 
             shift = int(round(delay0))
-            # gain from the reverberant reference channel (legacy: RMS normalization)
-            rms = np.sqrt(np.mean(rev[ref] ** 2))
-            gain = 10 ** (lvl / 20.0) / rms if rms > 0 else 1.0
             start = int(off * fs) - shift
-            placed.append((spk, ref, start, rev * gain, dire * gain, None if early is None else early * gain))
+            placed.append((spk, ref, start, rev, dire, early, shift))
+
+        gains = self._utt_gains(timeline, placed)
+        placed = [
+            (spk, ref, start, rev * g, dire * g, None if early is None else early * g)
+            for (spk, ref, start, rev, dire, early, _), g in zip(placed, gains)
+        ]
 
         T = max(int(timeline.current_time * fs), max(max(p[2] + p[3].shape[-1], p[2] + p[4].shape[-1]) for p in placed))
         mix = np.zeros((n_ch, T))
@@ -264,6 +267,19 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
                 for k in buf:
                     buf[k] = buf[k] * gain_f
         return mix, spk_rev, spk_dir, spk_early, n_ch
+
+    def _utt_gains(self, timeline, placed):
+        """Linear gain of each rendered utterance. placed: (spk, ref, start,
+        rev, dire, early, shift) per utterance. Default: the reverberant image
+        at the reference channel is RMS-normalized to the utterance level."""
+        gains = []
+        for (_, ref, _, rev, _, _, _), lvl in zip(placed, timeline.speech_lvls):
+            rms = np.sqrt(np.mean(rev[ref] ** 2))
+            gains.append(10 ** (lvl / 20.0) / rms if rms > 0 else 1.0)
+        return gains
+
+    def _new_recording_id(self):
+        return str(uuid4())
 
     def _render_noise(self, noise, meta, bank, scene, head_sched, pos_tl, speakers, T, ref):
         """noise: dict(signal=(T0,) unit RMS, level_db=float)."""
@@ -361,7 +377,7 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
             shifts = [k * n_len // max(n_src, 1) + np.random.randint(0, max(1, n_len // (4 * max(n_src, 1)))) for k in range(n_src)]
             noise = {"signal": sig, "level_db": lvl, "shifts": shifts}
 
-        recording_id = str(uuid4())
+        recording_id = self._new_recording_id()
         multi = len(scene["devices"]) > 1
         recordings, supervisions = [], []
         for dname, meta in scene["devices"].items():

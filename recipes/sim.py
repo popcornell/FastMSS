@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from fastmss.rirsimulator import RIRSimulator
 from fastmss.simulator import ConversationalMeetingSimulator
-from fastmss.spatial import SceneBankSimulator, SpatialMeetingSimulator, spatial_enabled
+from fastmss.spatial import ReplayMeetingSimulator, SceneBankSimulator, SpatialMeetingSimulator, build_conversations, get_spatial_cfg, make_items, spatial_enabled
 from fastmss.utils import split_monocuts_batch
 
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +37,8 @@ _simulator: ConversationalMeetingSimulator = None
 # through Pool initargs (which was the cause of the hang on many CPUs).
 # Requires the 'fork' start method; see the guard in stage 4.
 _global_spk2cuts = None
+# replay mode: (conversations, items), inherited the same way
+_global_replay = None
 
 def _worker_init(cfg, output_dir, rirs, noise_files, base_seed):
     worker_seed = base_seed + os.getpid()
@@ -44,6 +46,15 @@ def _worker_init(cfg, output_dir, rirs, noise_files, base_seed):
     random.seed(worker_seed)
 
     global _simulator
+    if _global_replay is not None:
+        _simulator = ReplayMeetingSimulator(
+            cfg,
+            Path(output_dir).absolute() / Path("audio"),
+            *_global_replay,
+            scenes=rirs,
+            noise_files=noise_files,
+        )
+        return
     if spatial_enabled(cfg):
         _simulator = SpatialMeetingSimulator(
             cfg,
@@ -442,13 +453,29 @@ def main(cfg: DictConfig) -> None:
         output_dir = Path(cfg.output_dir).absolute() / Path("manifests")
         output_dir.mkdir(exist_ok=True, parents=True)
 
-        uuids = [f"simulation_{x}" for x in range(cfg.n_meetings)]
+        replay = get_spatial_cfg(cfg)["replay"] if spatial_enabled(cfg) else {"enabled": False}
+        if replay["enabled"]:
+            convs = build_conversations(
+                all_cuts, replay["conv_regex"], replay["min_speakers"], replay["max_speakers"]
+            )
+            items = make_items(convs, replay["chunk"], replay["min_chunk"])
+            if replay["max_items"] is not None:
+                items = items[: replay["max_items"]]
+            logger.info(f"Replay: {len(convs)} conversations -> {len(items)} items")
+            uuids = list(range(len(items)))
+        else:
+            uuids = [f"simulation_{x}" for x in range(cfg.n_meetings)]
 
         base_seed = cfg.seed if (hasattr(cfg, "seed") and cfg.seed is not None) else 42
 
-        logger.info("Building spk2cuts in main process...")
-        spk2cuts = _build_spk2cuts(cfg, all_cuts)
-        logger.info(f"Done: {len(spk2cuts)} speakers across {sum(len(v) for v in spk2cuts.values())} cuts.")
+        if replay["enabled"]:
+            spk2cuts = {}
+            global _global_replay
+            _global_replay = (convs, items)
+        else:
+            logger.info("Building spk2cuts in main process...")
+            spk2cuts = _build_spk2cuts(cfg, all_cuts)
+            logger.info(f"Done: {len(spk2cuts)} speakers across {sum(len(v) for v in spk2cuts.values())} cuts.")
 
         if mp.get_start_method(allow_none=True) not in (None, "fork"):
             raise RuntimeError("Stage 4 requires the 'fork' multiprocessing start method so workers inherit _global_spk2cuts without pickling.")
@@ -469,7 +496,7 @@ def main(cfg: DictConfig) -> None:
 
         ctx = mp.get_context("fork")  # fork is required so workers inherit _global_spk2cuts
         with ctx.Pool(processes=cfg.n_jobs, initializer=_worker_init, initargs=init_args) as pool:
-             for c_rec, c_sup in tqdm(pool.imap_unordered(_worker_gen_audio, uuids), total=cfg.n_meetings, desc="Simulating meetings"):
+             for c_rec, c_sup in tqdm(pool.imap_unordered(_worker_gen_audio, uuids), total=len(uuids), desc="Simulating meetings"):
                  # spatial mode with several devices returns one recording per device
                  if isinstance(c_rec, list):
                      recordings.extend(c_rec)
