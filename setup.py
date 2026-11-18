@@ -19,6 +19,7 @@ setup(
     version="0.1.0",
     description="Fast Multi-Speaker Speech simulation framework",
     packages=find_packages(),
+    package_data={"recipes": ["*.yaml", "**/*.yaml"]},
     python_requires=">=3.8",
     install_requires=[
         "numpy",
