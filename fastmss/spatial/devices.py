@@ -197,6 +197,22 @@ def _easycom_atf(p):
     return dict(offsets=atf_offsets(str(path)), placement="head", atf=str(path))
 
 
+def _aria_atf(p):
+    # Project Aria glasses (MMCSG) with the measured ATFs of the CHiME-8 MMCSG /
+    # MCAS release (aria_atfs.pkl): 7 mics in the MMCSG channel order, far field
+    # from 1674 directions and a near-field mouth ATF (own voice, scene.py).
+    # Offsets are the plane-wave fit of the measured delays (metadata only).
+    from .atf import atf_offsets
+
+    path = p.get("atf")
+    if not path:
+        raise ValueError(
+            "preset aria_atf needs atf=<path to aria_atfs.pkl> (MCAS dataset, "
+            "https://ai.meta.com/datasets/mcas-dataset/, CHiME_Aria_ATFs)"
+        )
+    return dict(offsets=atf_offsets(str(path)), placement="head", atf=str(path))
+
+
 def _closetalk(p):
     # One headset mic per speaker; offset handled per speaker by the scene.
     return dict(offsets=np.zeros((1, 3)), placement="mouth")
@@ -211,6 +227,7 @@ PRESETS = {
     "binaural_worn": _binaural_worn,
     "glasses": _glasses,
     "easycom_atf": _easycom_atf,
+    "aria_atf": _aria_atf,
     "closetalk": _closetalk,
 }
 

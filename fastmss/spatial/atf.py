@@ -21,7 +21,18 @@ Preprocessing:
     channels = 1); inter-channel and directional level differences are kept.
 
 The far-field ATFs are also used for the wearer's own mouth (direction from
-the head center), which ignores near-field effects.
+the head center), which ignores near-field effects, unless the set carries a
+near-field mouth ATF (Aria, ``load_near``; scene.py then uses it for the
+direct path of the wearer's own voice).
+
+Formats (by file suffix):
+  * ``.h5``: EasyCom ``Device_ATFs.h5`` (above).
+  * ``.pkl``: CHiME-8 MMCSG / MCAS ``aria_atfs.pkl`` (Aria glasses, 7 mics in
+    the MMCSG channel order): ``far_field`` (sample, ch, direction),
+    ``directions`` (3, direction) = azimuth (deg, 0 = forward, 90 = left),
+    elevation (deg, 90 = up), distance (1.53 m); ``near_field`` (sample, ch)
+    from the mouth; 48 kHz. The device frame is the Aria one (x front, y left,
+    z up), as in FastMSS.
 """
 
 from functools import lru_cache
@@ -44,9 +55,10 @@ def directions(theta, phi):
     return np.stack([np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)], 1)
 
 
-@lru_cache(maxsize=4)
-def load_raw(path):
-    """Raw ATF set: dict(ir [n_ch, n_dir, n], u [n_dir, 3], fs, t0, offsets [n_ch, 3], fit_rms)."""
+ARIA_FS = 48000.0
+
+
+def _read_h5(path):
     import h5py
 
     with h5py.File(path, "r") as f:
@@ -54,9 +66,28 @@ def load_raw(path):
         theta = np.asarray(f["Theta"][()], dtype=np.float64).ravel()
         phi = np.asarray(f["Phi"][()], dtype=np.float64).ravel()
         fs = float(np.asarray(f["SamplingFreq_Hz"][()]).ravel()[0])
-    ir = np.ascontiguousarray(ir.transpose(2, 1, 0))  # (ch, dir, sample)
+    return np.ascontiguousarray(ir.transpose(2, 1, 0)), directions(theta, phi), fs, None  # ir (ch, dir, sample)
+
+
+def _read_aria_pkl(path):
+    import pickle
+
+    with open(path, "rb") as f:
+        d = pickle.load(f)
+    ir = np.ascontiguousarray(np.asarray(d["far_field"], dtype=np.float64).transpose(1, 2, 0))  # (ch, dir, sample)
+    az, el = np.deg2rad(np.asarray(d["directions"], dtype=np.float64)[:2])
+    u = np.stack([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)], 1)
+    near = d.get("near_field")
+    near = None if near is None else np.ascontiguousarray(np.asarray(near, dtype=np.float64).T)  # (ch, sample)
+    return ir, u, ARIA_FS, near
+
+
+@lru_cache(maxsize=4)
+def load_raw(path):
+    """Raw ATF set: dict(ir [n_ch, n_dir, n], u [n_dir, 3], fs, t0, offsets [n_ch, 3], fit_rms,
+    near [n_ch, n] or None)."""
+    ir, u, fs, near = (_read_aria_pkl if str(path).endswith(".pkl") else _read_h5)(path)
     n_ch, n_dir, _ = ir.shape
-    u = directions(theta, phi)
     # plane-wave fit of the peak delays: tau[d, m] = t0 - u_d . r_m / c * fs
     tau = _peak(ir).T  # (dir, ch)
     A = np.zeros((n_dir * n_ch, 1 + 3 * n_ch))
@@ -72,6 +103,7 @@ def load_raw(path):
         "t0": float(x[0]),
         "offsets": x[1:].reshape(n_ch, 3),
         "fit_rms": float(np.sqrt(np.mean(res**2))),
+        "near": near,
     }
 
 
@@ -102,6 +134,24 @@ def load_atf(path, fs, pre_ms=0.5, tail_ms=3.0):
     ir = ir / np.sqrt(np.mean(np.sum(ir**2, axis=-1)))
     pre = (pre0 + raw["t0"] - np.floor(raw["t0"])) * fs / fs0
     return {"ir": ir.astype(np.float64), "u": raw["u"], "pre": float(pre)}
+
+
+@lru_cache(maxsize=8)
+def load_near(path, fs):
+    """Near-field mouth ATF at ``fs`` (n_ch, n), or None if the set has none.
+    Whole measured response, resampled; level and timing are set by the scene
+    (it is aligned and level-matched to an omni point source at the mouth)."""
+    from scipy.signal import resample_poly
+
+    raw = load_raw(path)
+    if raw["near"] is None:
+        return None
+    h = raw["near"].copy()
+    fs0 = raw["fs"]
+    if fs != fs0:
+        g = gcd(int(fs), int(fs0))
+        h = resample_poly(h, int(fs) // g, int(fs0) // g, axis=-1)
+    return h
 
 
 def make_atf_directivities(path, fs, yaw):

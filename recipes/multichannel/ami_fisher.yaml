@@ -1,0 +1,68 @@
+# @package _global_
+# Fisher calls replayed at an AMI-like meeting table: both sides of a call are
+# seated around the table and recorded by the AMI Mic Array 1 (8 omni mics,
+# 10 cm radius, channel k = Array1-0(k+1)). Original Fisher timing (replay),
+# word alignments kept. The ranges below are first guesses; they are fitted to
+# AMI train statistics (MultichannelVAP semvad/sim_stats.py) on a pilot.
+#
+# python recipes/sim.py +multichannel=ami_fisher output_dir=... \
+#     manifest_dir=/scratch/bbjs/cornell2/MFA/out/manifests 'noise_folders=[<MUSAN>/noise]'
+defaults:
+  - _common
+
+# source: Sidon-restored Fisher at 16 kHz, one MultiCut per call (channel 0 = A, 1 = B)
+manifest_prefix: fisher
+dset_splits: [cuts_mfa]
+split_fa_factor: null      # replay renders whole channels; no splitting at pauses
+audio_format: flac        # PCM 16 FLAC: about half the size of WAV for 8 channels
+min_max_spk: [2, 2]
+max_concurrent_speakers: 2
+
+# AMI rooms: meeting rooms of 5 to 9 m, moderately reverberant
+room_sz: [5, 9]
+room_ceiling: [2.6, 3.2]
+rt60: [0.3, 0.7]
+n_rirs: 200
+n_pos_rirs: 30
+
+# levels: one gain per talker, acoustic level differences kept (level: source)
+# smoke (2 items) against AMI train: level -21 vs -48 dB, SNR 20 vs 6.8 dB -> shifted
+base_gain: [-57, -42]
+rel_gain: [-4, 4]
+
+# quiet, mostly stationary room noise (projector, fans, PCs)
+add_noise: true
+# pilot (20 h): SNR 11.8 vs 6.8 dB on AMI train -> +5 dB
+noise_rel_gain: [-12, 3]
+noise_probability_global: 1.0
+
+spatial:
+  devices:
+    - {preset: ami, height: [0.72, 0.80]}   # array on the table
+  face: group
+  # seated around the table: mouth 0.7 to 1.6 m (horizontal) from the array
+  node_height: [1.10, 1.30]
+  min_dist_device: 0.7
+  max_dist_device: 1.6
+  source_directivity: {pattern: cardioid, n_orient: 4}
+  motion:
+    inter: static            # seated
+    intra: rotate            # head turns between turns, no walking
+    move_prob: 0.3
+    rotate_range: [10.0, 60.0]
+  noise: {type: diffuse, signal: shifted, n_sources: 4, pattern: hypercardioid, corner_dist: 1.0}
+  # pilot2 (20 h): MSC 125-500 Hz 0.81 (solo) / 0.79 (silence) vs AMI 0.73 / 0.71, higher bands matched
+  # -> independent pink noise per mic, dB relative to the room noise
+  # pilot3a -14:-10 -> silence 0.66, pilot3b -8:-4 -> 0.48; -17:-13 interpolates to ~0.72.
+  # Solo band 1 stays ~0.80 (not a sensor noise effect).
+  sensor_noise: [-17, -13]
+  sensor_noise_color: pink
+  replay:
+    enabled: true
+    conv_regex: null         # one MultiCut per call is a conversation by itself
+    min_speakers: 2
+    max_speakers: 2
+    chunk: 300
+    min_gap: 0.3
+    xfade: 0.02
+    level: source

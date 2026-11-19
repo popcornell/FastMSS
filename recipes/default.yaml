@@ -93,6 +93,8 @@ boost_overlap_factor: null
 # Output options
 # ============================================================
 save_cutset: true
+audio_format: wav     # wav or flac (PCM 16) for the mixture and speaker dumps
+stall_timeout: 1800   # s without a finished item before stage 4 gives up on lost (killed) workers
 save_spk: false
 save_anechoic: false
 save_rttm: false

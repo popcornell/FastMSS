@@ -75,10 +75,12 @@ def build_conversations(cuts, conv_regex=r"^(.*)-[AB]$", min_speakers=2, max_spe
     sides = {}
     for cut in cuts:
         rec = cut.recording
-        ch = cut.channel if isinstance(cut.channel, int) else cut.channel[0]
-        key = (rec.id, ch)
-        side = sides.setdefault(key, {"recording": rec, "channel": ch, "sups": [], "spk": set()})
+        cut_ch = cut.channel if isinstance(cut.channel, int) else cut.channel[0]
         for sup in cut.supervisions:
+            # a MultiCut (e.g. a whole Fisher call, channel [0, 1]) holds every
+            # side: the side of a supervision is its own channel
+            ch = sup.channel if isinstance(sup.channel, int) else (sup.channel[0] if sup.channel else cut_ch)
+            side = sides.setdefault((rec.id, ch), {"recording": rec, "channel": ch, "sups": [], "spk": set()})
             start = max(0.0, cut.start + sup.start)
             end = min(rec.duration, cut.start + sup.start + sup.duration)
             if end <= start:
@@ -193,7 +195,8 @@ class ReplayMeetingSimulator(SpatialMeetingSimulator):
         for side in conv["sides"]:
             rec, spk = side["recording"], side["spk"]
             if rec.sampling_rate != fs:
-                raise ValueError(f"replay: {rec.id} is at {rec.sampling_rate} Hz, samplerate is {fs}")
+                # e.g. Sidon-restored Fisher at 24 kHz into a 16 kHz simulation
+                rec = rec.resample(fs)
             bounds, merged = piece_bounds(side["sups"], w0, w1, float(self.rp["min_gap"]))
             for k, (a, b) in enumerate(bounds):
                 # overlap the neighbours by xfade (inner boundaries only)

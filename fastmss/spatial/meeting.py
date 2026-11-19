@@ -62,6 +62,7 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
                 )
                 for name, meta in scene["devices"].items()
             }
+            self._scale_own_direct(scene, banks)
             # devices with measured ATFs: measured direct-path arrivals
             for meta in scene["devices"].values():
                 if meta.get("ref_delay"):
@@ -121,6 +122,33 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
         return pose_for_entry, headset_pose
 
     # ------------------------------------------------------------------ #
+    def _scale_own_direct(self, scene, banks):
+        """spatial.near_field_render_gain_db: render-time gain on the wearer's
+        own-voice direct path (worn poses, mouth entry of the same seat and yaw),
+        on top of the build-time near_field_gain_db, so the wearer direct to
+        reverberant ratio can be calibrated without rebuilding the room banks.
+        bank += (g - 1) * direct on those entries; the direct bank is scaled by g.
+        0 (default): banks untouched (memory mapped, no copy)."""
+        g_db = float(self.sp.get("near_field_render_gain_db", 0.0) or 0.0)
+        if g_db == 0.0 or not scene.get("mouth_entries"):
+            return
+        g = 10 ** (g_db / 20.0)
+        for name, meta in scene["devices"].items():
+            if meta.get("placement") != "head":
+                continue
+            bank, dbank = banks[name]
+            bank, dbank = np.array(bank), np.array(dbank)
+            Ld = dbank.shape[-1]
+            for pi, pose in enumerate(meta["poses"]):
+                if pose.get("kind") != "seat":
+                    continue
+                src = scene["mouth_entries"][pose["seat"]][pose["yaw_idx"]]
+                d = dbank[pi, src].astype(np.float64)
+                n = min(Ld, bank.shape[-1])
+                bank[pi, src, :, :n] = (bank[pi, src, :, :n] + (g - 1.0) * d[:, :n]).astype(bank.dtype)
+                dbank[pi, src] = (d * g).astype(dbank.dtype)
+            banks[name] = (bank, dbank)
+
     def _render_one(self, x, src_sched, mic_sched, bank, dbank, mic_pos, src_pos, ref_ch, want_early, ref_delay=None):
         """Render x for one device (or one closetalk channel).
 
@@ -302,7 +330,11 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
                 out = out + self._render_noise_group(xs, ents, meta, bank, scene, head_sched, pos_tl, speakers, T)
         r = 0 if ref is None else ref
         rms = np.sqrt(np.mean(out[r] ** 2))
-        return out * (10 ** (noise["level_db"] / 20.0) / (rms + 1e-8))
+        out = out * (10 ** (noise["level_db"] / 20.0) / (rms + 1e-8))
+        if noise.get("sensor_db") is not None and meta["placement"] != "mouth":
+            out = out + sensor_noise(out.shape, self.sp.get("sensor_noise_color", "pink"), self.cfg.samplerate) * (
+                10 ** (noise["sensor_db"] / 20.0))
+        return out
 
     def _render_noise_group(self, x, ent, meta, bank, scene, head_sched, pos_tl, speakers, T):
         """Render signal x played by the noise source entries ent."""
@@ -376,6 +408,10 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
             # time shifts for noise.signal == "shifted": spread over the clip
             shifts = [k * n_len // max(n_src, 1) + np.random.randint(0, max(1, n_len // (4 * max(n_src, 1)))) for k in range(n_src)]
             noise = {"signal": sig, "level_db": lvl, "shifts": shifts}
+            # sensor noise: independent white noise per channel, level relative to the room noise
+            sens = self.sp.get("sensor_noise")
+            if sens:
+                noise["sensor_db"] = lvl + np.random.uniform(*sens)
 
         recording_id = self._new_recording_id()
         multi = len(scene["devices"]) > 1
@@ -410,3 +446,16 @@ class SpatialMeetingSimulator(ConversationalMeetingSimulator):
         if not multi:
             return recordings[0], supervisions
         return recordings, supervisions
+
+
+def sensor_noise(shape, color="pink", fs=16000, f_min=20.0):
+    """Independent unit-RMS noise per channel (row): white, or pink (1/f power, flat below f_min)."""
+    x = np.random.normal(0, 1, shape)
+    if color == "pink":
+        X = np.fft.rfft(x, axis=-1)
+        f = np.fft.rfftfreq(shape[-1], 1.0 / fs)
+        X *= 1.0 / np.sqrt(np.maximum(f, f_min))
+        x = np.fft.irfft(X, n=shape[-1], axis=-1)
+    elif color != "white":
+        raise ValueError(f"sensor_noise_color must be white or pink, got {color}")
+    return x / (np.sqrt(np.mean(x ** 2, axis=-1, keepdims=True)) + 1e-12)

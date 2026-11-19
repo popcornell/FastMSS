@@ -22,6 +22,8 @@ spatial:
   node_height: [1.0, 1.8]
   head_height: [1.1, 1.3]
   min_dist_device: 1.0
+  max_dist_device: null
+  max_dist_seat: null
   n_trajectories: 10
   traj_len: [1.0, 4.0]
   traj_step: 0.05

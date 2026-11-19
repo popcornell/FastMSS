@@ -749,18 +749,21 @@ class ConversationalMeetingSimulator:
         """Write mixture and optional speaker dumps, return the lhotse Recording.
 
         extra: optional {suffix: {spk: audio}} for additional per-speaker dumps
-        (e.g. "early"), written as <id>-spk-<spk>-<suffix>.wav."""
-        audio_filename = f"{recording_id}.wav"
+        (e.g. "early"), written as <id>-spk-<spk>-<suffix>.<ext>.
+
+        cfg.audio_format: "wav" (default) or "flac", both PCM 16."""
+        ext = str(getattr(self.cfg, "audio_format", None) or "wav")
+        audio_filename = f"{recording_id}.{ext}"
         Path(self.output_dir).mkdir(exist_ok=True)
         audio_path = os.path.join(self.output_dir, audio_filename)
 
         # Save audio to disk
-        sf.write(audio_path, output_audio.T, self.cfg.samplerate)
+        sf.write(audio_path, output_audio.T, self.cfg.samplerate, subtype="PCM_16")
 
         if self.cfg.save_spk:
             for k in spk2audio:
                 sf.write(
-                    os.path.join(self.output_dir, f"{recording_id}-spk-{k}.wav"),
+                    os.path.join(self.output_dir, f"{recording_id}-spk-{k}.{ext}"),
                     spk2audio[k].T,
                     self.cfg.samplerate,
                 )
@@ -768,7 +771,7 @@ class ConversationalMeetingSimulator:
                 for k in spk2audio_anechoic:
                     sf.write(
                         os.path.join(
-                            self.output_dir, f"{recording_id}-spk-{k}-anechoic.wav"
+                            self.output_dir, f"{recording_id}-spk-{k}-anechoic.{ext}"
                         ),
                         spk2audio_anechoic[k].T,
                         self.cfg.samplerate,
@@ -777,7 +780,7 @@ class ConversationalMeetingSimulator:
             for k in dumps:
                 sf.write(
                     os.path.join(
-                        self.output_dir, f"{recording_id}-spk-{k}-{suffix}.wav"
+                        self.output_dir, f"{recording_id}-spk-{k}-{suffix}.{ext}"
                     ),
                     dumps[k].T,
                     self.cfg.samplerate,

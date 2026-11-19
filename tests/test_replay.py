@@ -98,6 +98,37 @@ def test_conversation_and_word_times(tmp_path, call):
     assert w_rel[0][1] == pytest.approx(0.5)
 
 
+def make_multicut_call(root, seed=0):
+    """The same call as one two-channel recording and one MultiCut (channel
+    [0, 1]) holding both sides, as in the Fisher lhotse manifests."""
+    from lhotse import AudioSource, MultiCut
+
+    cuts, chans = make_call(root, seed=seed)
+    recs = {c.recording.id: c.recording for c in cuts}
+    src = [AudioSource("file", channels=[k], source=recs[f"conv1-{side}"].sources[0].source) for k, side in enumerate("AB")]
+    r0 = recs["conv1-A"]
+    rec = Recording("conv1", src, r0.sampling_rate, r0.num_samples, r0.duration, channel_ids=[0, 1])
+    sups = []
+    for k, side in enumerate("AB"):
+        for c in cuts:
+            if c.recording.id == f"conv1-{side}":
+                s = c.supervisions[0]
+                w = [AlignmentItem(a.symbol, a.start + c.start, a.duration) for a in s.alignment["word"]]
+                sups.append(SupervisionSegment(s.id, "conv1", c.start, s.duration, channel=k, speaker=s.speaker, text=s.text, alignment={"word": w}))
+    return [MultiCut("conv1", 0.0, rec.duration, [0, 1], recording=rec, supervisions=sups)], chans
+
+
+def test_multicut_sides(tmp_path):
+    """A MultiCut with one talker per channel gives one side per channel."""
+    cuts, _ = make_multicut_call(tmp_path)
+    convs = build_conversations(cuts)
+    assert len(convs) == 1 and convs[0]["id"] == "conv1"
+    sides = {s["spk"]: s for s in convs[0]["sides"]}
+    assert set(sides) == {"spkA", "spkB"}
+    assert sides["spkA"]["channel"] == 0 and sides["spkB"]["channel"] == 1
+    assert [t for s in sides["spkB"]["sups"] for t in (s["start"], s["end"])] == pytest.approx(np.ravel(SEGS["B"]).tolist())
+    assert sides["spkB"]["sups"][0]["words"][0][1] == pytest.approx(SEGS["B"][0][0])
+
 def test_piece_bounds():
     sups = [{"start": a, "end": b} for a, b in SEGS["A"]]
     bounds, merged = piece_bounds(sups, 0.0, DUR, min_gap=0.3)

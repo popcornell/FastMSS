@@ -17,12 +17,13 @@ Layout of ``<rir_dir>/rirs/room_<id>/``:
 
 import json
 import logging
+import zlib
 from pathlib import Path
 
 import numpy as np
 import pyroomacoustics
 
-from .atf import diffuse_filters, load_atf, make_atf_directivities, phat_delay
+from .atf import diffuse_filters, load_atf, load_near, make_atf_directivities, phat_delay
 from .config import get_spatial_cfg
 from .devices import build_devices, rot_z
 from .directivity import is_omni, make_directivity
@@ -36,6 +37,13 @@ FRAC_DELAY_OFFSET = pyroomacoustics.constants.get("frac_delay_length") // 2
 
 MIC_CHUNK = 8
 SRC_CHUNK = 64
+
+
+def room_seed(seed, room_id):
+    """Distinct, reproducible 32 bit seed per room ("room_17" -> index 17)."""
+    tail = str(room_id).rsplit("_", 1)[-1]
+    idx = int(tail) if tail.isdigit() else zlib.crc32(str(room_id).encode())
+    return int(np.random.SeedSequence([0 if seed is None else int(seed), idx]).generate_state(1)[0])
 
 
 def direct_delay(src_pos, mic_pos, fs):
@@ -76,9 +84,10 @@ class SceneBankSimulator:
                 continue
             return room_dim, rt60, e_absorption, max_order
 
-    def _rand_point(self, room_dim, z_range, avoid=(), min_dist=(), tries=2000):
-        """Uniform point at delta_dist from the walls and at least min_dist[i]
-        (horizontally) from every point of avoid[i]."""
+    def _rand_point(self, room_dim, z_range, avoid=(), min_dist=(), tries=2000, near=(), max_dist=()):
+        """Uniform point at delta_dist from the walls, at least min_dist[i]
+        (horizontally) from every point of avoid[i] and at most max_dist[j]
+        (horizontally) from some point of near[j] (max_dist[j] None: no bound)."""
         l, w, h = room_dim
         dd = self.cfg.delta_dist
         z_lo, z_hi = z_range[0], min(z_range[1], h - dd)
@@ -97,6 +106,9 @@ class SceneBankSimulator:
                 if len(pts) and np.min(np.linalg.norm(np.asarray(pts)[:, :2] - p[:2], axis=1)) < md * relax:
                     ok = False
                     break
+            for pts, mx in zip(near, max_dist):
+                if ok and mx is not None and len(pts) and np.min(np.linalg.norm(np.asarray(pts)[:, :2] - p[:2], axis=1)) > mx / relax:
+                    ok = False
             if ok:
                 return p
         return p
@@ -195,22 +207,71 @@ class SceneBankSimulator:
         k = min(int(d.atf_order), int(max_order))
         h_diff = diffuse_filters(d.atf, fs)
         out = np.zeros((len(poses) * n_ch, len(src_pos), length), dtype=np.float32)
+        share = bool(self.sp.get("atf_late_shared_yaw", False))
+        late_cache = {}
         for pi, pose in enumerate(poses):
             centers = [pose["center"]] * n_ch
             dirs = make_atf_directivities(d.atf, fs, pose["yaw"])
             rir = self._compute(room_dim, e_absorption, k, src_pos, src_dir, centers, dirs, length + shift)[..., shift:]
             if max_order > k:
-                eff = list(np.asarray(pose["mic_pos"]))
-                omni = [None] * n_ch
-                late = self._compute(room_dim, e_absorption, max_order, src_pos, src_dir, eff, omni, length, rand_ism=False)
-                late -= self._compute(room_dim, e_absorption, k, src_pos, src_dir, eff, omni, length, rand_ism=False)
-                for m in range(n_ch):
-                    late[m] = fftconvolve(late[m], h_diff[m][None, :], mode="same", axes=-1)
+                key = ("seat", pose["seat"]) if share and pose.get("kind") == "seat" else ("pose", pi)
+                late = late_cache.get(key)
+                if late is None:
+                    eff = list(np.asarray(pose["mic_pos"]))
+                    omni = [None] * n_ch
+                    late = self._compute(room_dim, e_absorption, max_order, src_pos, src_dir, eff, omni, length, rand_ism=False)
+                    late -= self._compute(room_dim, e_absorption, k, src_pos, src_dir, eff, omni, length, rand_ism=False)
+                    for m in range(n_ch):
+                        late[m] = fftconvolve(late[m], h_diff[m][None, :], mode="same", axes=-1)
+                    if key[0] == "seat":
+                        late_cache[key] = late
                 rir += late
             out[pi * n_ch : (pi + 1) * n_ch] = rir
         return out
 
+    def _own_voice_near_field(self, d, room_dim, e_absorption, src_pos, poses, mouth_entries, rev, dirp):
+        """Measured near-field mouth ATF (Aria) for the wearer's own voice, in place.
+
+        For every worn pose (seat s, head yaw bin y) the direct path from the
+        mouth entry of the same seat and yaw is replaced in ``rev`` and ``dirp``
+        ([n_poses * n_ch, n_src, len]) by the near-field ATF. Timing and level
+        follow an omni point source at the mouth seen through the far-field
+        ATFs: the near-field response is placed at the lag of maximum
+        cross-correlation with it (summed over channels) and scaled to its
+        energy, times spatial.near_field_gain_db. Reflections keep the
+        far-field model."""
+        near = load_near(d.atf, self.cfg.samplerate)
+        if near is None:
+            return
+        g = 10 ** (float(self.sp.get("near_field_gain_db", 0.0)) / 20.0)
+        n_ch = d.n_mics
+        Ld = dirp.shape[-1]
+        omni = make_directivity("omni", 0.0)
+        for pi, pose in enumerate(poses):
+            if pose.get("kind") != "seat":
+                continue
+            src = mouth_entries[pose["seat"]][pose["yaw_idx"]]
+            ref = self._compute_atf(d, room_dim, e_absorption, 0, [src_pos[src]], [omni], [pose], Ld)[:, 0]
+            xc = sum(np.correlate(ref[m], near[m], mode="full") for m in range(n_ch))
+            lag = int(np.argmax(xc)) - (near.shape[-1] - 1)
+            h = np.zeros_like(ref)
+            a0, b0 = max(lag, 0), min(lag + near.shape[-1], Ld)
+            h[:, a0:b0] = near[:, a0 - lag : b0 - lag]
+            h *= g * np.sqrt(np.sum(ref**2) / max(np.sum(h**2), 1e-30))
+            sl = slice(pi * n_ch, (pi + 1) * n_ch)
+            n = min(Ld, rev.shape[-1])
+            rev[sl, src, :n] += h[:, :n] - dirp[sl, src, :n]
+            dirp[sl, src] = h
+
     # ------------------------------------------------------------------ #
+    def gen_scene_seeded(self, room_id):
+        """gen_scene with one seed per room from (cfg.seed, room index).
+
+        For parallel bank building: forked workers inherit the same global
+        RNG state, so plain gen_scene drew the same rooms in every worker."""
+        np.random.seed(room_seed(self.cfg.get("seed"), room_id))
+        return self.gen_scene(room_id)
+
     def gen_scene(self, room_id):
         sp = self.sp
         fs = self.cfg.samplerate
@@ -229,6 +290,7 @@ class SceneBankSimulator:
                 dev_pose[d.name] = (c, y)
                 fixed_pts.extend(d.mic_positions(c, y).tolist())
         md_dev = sp["min_dist_device"]
+        dev_centers = [c.tolist() for c, _ in dev_pose.values()]
 
         # wearer seats (head centers)
         worn = [d for d in devices if d.worn]
@@ -237,7 +299,8 @@ class SceneBankSimulator:
             # every worn device has its own wearer, so at least one seat each
             for _ in range(max(sp["n_wearer_seats"], len(worn))):
                 seats.append(
-                    self._rand_point(room_dim, sp["head_height"], [fixed_pts, seats], [md_dev, 1.0])
+                    self._rand_point(room_dim, sp["head_height"], [fixed_pts, seats], [md_dev, 1.0],
+                                     near=[dev_centers], max_dist=[sp.get("max_dist_device")])
                 )
         yaws = 2 * np.pi * np.arange(sp["n_yaw"]) / sp["n_yaw"]
 
@@ -245,7 +308,8 @@ class SceneBankSimulator:
         nodes = []
         for _ in range(self.cfg.n_pos_rirs):
             nodes.append(
-                self._rand_point(room_dim, sp["node_height"], [fixed_pts, seats], [md_dev, 0.7])
+                self._rand_point(room_dim, sp["node_height"], [fixed_pts, seats], [md_dev, 0.7],
+                                 near=[dev_centers, seats], max_dist=[sp.get("max_dist_device"), sp.get("max_dist_seat")])
             )
         nodes = np.array(nodes)
 
@@ -399,6 +463,8 @@ class SceneBankSimulator:
             else:
                 rev = self._compute(room_dim, e_absorption, max_order, src_pos, src_dir, mic_pos, mic_dir, L)
                 dirp = self._compute(room_dim, e_absorption, 0, src_pos, src_dir, mic_pos, mic_dir, Ld)
+            if d.atf is not None and mouth_entries and sp.get("near_field", True):
+                self._own_voice_near_field(d, room_dim, e_absorption, src_pos, poses, mouth_entries, rev, dirp)
             rev = rev.reshape(P, n_ch, n_src, L).transpose(0, 2, 1, 3)
             dirp = dirp.reshape(P, n_ch, n_src, Ld).transpose(0, 2, 1, 3)
             np.save(out_dir / f"{d.name}.npy", np.ascontiguousarray(rev.astype(dtype)))

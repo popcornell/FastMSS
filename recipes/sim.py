@@ -378,7 +378,7 @@ def main(cfg: DictConfig) -> None:
             room_ids = iter([f"room_{x}" for x in range(cfg.n_rirs)])
             all_scenes = []
             for c_scene in tqdm(
-                parallel_map(simulator.gen_scene, room_ids, num_jobs=cfg.n_jobs),
+                parallel_map(simulator.gen_scene_seeded, room_ids, num_jobs=cfg.n_jobs),
                 total=cfg.n_rirs,
                 desc="Simulating spatial RIR banks",
             ):
@@ -495,15 +495,29 @@ def main(cfg: DictConfig) -> None:
         supervisions = []
 
         ctx = mp.get_context("fork")  # fork is required so workers inherit _global_spk2cuts
+        # A worker killed mid-item (e.g. cgroup OOM) is replaced by Pool but its item never
+        # returns, so imap would wait forever. If no item finishes for stall_timeout seconds,
+        # stop waiting and write the manifests of the items that did finish.
+        stall_timeout = float(getattr(cfg, "stall_timeout", None) or 1800)
         with ctx.Pool(processes=cfg.n_jobs, initializer=_worker_init, initargs=init_args) as pool:
-             for c_rec, c_sup in tqdm(pool.imap_unordered(_worker_gen_audio, uuids), total=len(uuids), desc="Simulating meetings"):
-                 # spatial mode with several devices returns one recording per device
-                 if isinstance(c_rec, list):
-                     recordings.extend(c_rec)
-                 else:
-                     recordings.append(c_rec)
-                 supervisions.extend(c_sup)
-                 
+            it = pool.imap_unordered(_worker_gen_audio, uuids)
+            for _ in tqdm(range(len(uuids)), desc="Simulating meetings"):
+                try:
+                    c_rec, c_sup = it.next(timeout=stall_timeout)
+                except mp.TimeoutError:
+                    logger.warning(
+                        f"No item finished in {stall_timeout:.0f} s: assuming lost workers, "
+                        f"writing manifests for the finished items ({len(recordings)} recordings)."
+                    )
+                    pool.terminate()
+                    break
+                # spatial mode with several devices returns one recording per device
+                if isinstance(c_rec, list):
+                    recordings.extend(c_rec)
+                else:
+                    recordings.append(c_rec)
+                supervisions.extend(c_sup)
+
         supervisions = SupervisionSet(supervisions)
         recordings = RecordingSet(recordings)
         lhotse.validate_recordings_and_supervisions(recordings=recordings, supervisions=supervisions)

@@ -1,0 +1,81 @@
+# @package _global_
+# Fisher calls replayed as MMCSG-like egocentric conversations: one side of a
+# call wears Project Aria glasses (7 mics, MMCSG channel order) and the other
+# side sits opposite. The glasses use the measured Aria ATFs of the CHiME-8
+# MMCSG / MCAS release (aria_atfs.pkl): far field from 1674 directions, and the
+# near-field mouth ATF for the direct path of the wearer's own voice.
+# Original Fisher timing (replay), word alignments kept. Ranges are first
+# guesses, fitted to MMCSG train statistics (MultichannelVAP semvad/sim_stats.py) on a pilot.
+#
+# python recipes/sim.py +multichannel=mmcsg_aria atf_path=<.../aria_atfs.pkl> output_dir=... \
+#     manifest_dir=<fisher manifests> 'noise_folders=[<MUSAN>/noise]'
+defaults:
+  - _common
+
+atf_path: ???
+manifest_prefix: fisher
+dset_splits: [cuts_mfa]
+split_fa_factor: null
+audio_format: flac
+min_max_spk: [2, 2]
+max_concurrent_speakers: 2
+
+# MMCSG: offices and living rooms; smaller rooms also keep the ISM order down
+room_sz: [3.5, 7]
+room_ceiling: [2.5, 3.0]
+rt60: [0.2, 0.6]
+n_rirs: 200
+n_pos_rirs: 30
+
+# levels: one gain per talker, acoustic level differences kept (level: source),
+# so the wearer is louder on the glasses as on the real recordings
+base_gain: [-57, -42]
+rel_gain: [-4, 4]
+
+add_noise: true
+# calibrated on Aria pilots cA..cG against the MMCSG noise floor (quietest 10% frames, -61.7 dB)
+noise_rel_gain: [-3, 12]
+noise_probability_global: 1.0
+
+spatial:
+  devices:
+    - {preset: aria_atf, atf: "${atf_path}", atf_order: 3}
+  wearer: speaker
+  n_wearer_seats: 1
+  n_yaw: 8
+  face: group
+  head_height: [1.10, 1.30]      # seated
+  node_height: [1.10, 1.30]
+  min_dist_device: 0.7
+  max_dist_seat: 2.0             # partner within 2 m of the wearer
+  source_directivity: {pattern: cardioid, n_orient: 4}
+  near_field: true
+  near_field_gain_db: 0.0          # applied at room build (stage 3); rirs_aria was built with 0
+  # render-time gain on the wearer's own direct path (calibrated: wearer gap 12 dB vs 13.2 real,
+  # wearer coherence 1-4 kHz close to real; +6 too diffuse, +10 gap 16 dB)
+  near_field_render_gain_db: 8.0
+  # late part (orders > atf_order) once per seat, reused over the 8 yaw bins
+  atf_late_shared_yaw: true
+  # no walking (motion static/rotate): no trajectory sources
+  n_trajectories: 0
+  motion:
+    inter: static
+    intra: rotate
+    move_prob: 0.3
+    rotate_range: [10.0, 60.0]
+    head_turn_prob: 0.7
+    head_jitter: 20.0
+  # real Aria noise floor is coherent across mics (MSC ~0.97 below 250 Hz): same clip on every
+  # source, no independent sensor noise (it drops low band MSC to ~0.68)
+  noise: {type: diffuse, signal: same, n_sources: 4, pattern: hypercardioid, corner_dist: 1.0}
+  sensor_noise: null
+  sensor_noise_color: pink
+  replay:
+    enabled: true
+    conv_regex: null
+    min_speakers: 2
+    max_speakers: 2
+    chunk: 300
+    min_gap: 0.3
+    xfade: 0.02
+    level: source

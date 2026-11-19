@@ -43,7 +43,7 @@ def test_kinect_spacing():
 
 def test_pose_transform_preserves_geometry():
     for name in PRESETS:
-        if name == "easycom_atf":  # needs the measured ATF file (tests/test_atf.py)
+        if name in ("easycom_atf", "aria_atf"):  # need the measured ATF files (tests/test_atf.py, test_aria_atf.py)
             continue
         d = build_device({"preset": name})
         mp = d.mic_positions([1.0, 2.0, 1.5], 1.234)

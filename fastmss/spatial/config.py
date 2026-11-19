@@ -21,6 +21,11 @@ SPATIAL_DEFAULTS = {
     "node_height": [1.0, 1.8],
     "head_height": [1.1, 1.3],
     "min_dist_device": 1.0,
+    # optional upper bounds (horizontal, metres): talkers (and wearer seats) at
+    # most max_dist_device from a fixed device (e.g. seated around an AMI table),
+    # talkers at most max_dist_seat from a wearer seat (conversation partner)
+    "max_dist_device": None,
+    "max_dist_seat": None,
     "rir_max_len": 1.0,
     "rir_dtype": "float16",
     "motion": {
@@ -43,6 +48,23 @@ SPATIAL_DEFAULTS = {
         "pattern": "hypercardioid",
         "corner_dist": 1.0,
     },
+    # independent noise per channel of fixed devices (mic self-noise, electronics),
+    # [lo, hi] dB relative to the room noise level; null = off. Needs add_noise.
+    "sensor_noise": None,
+    # worn devices whose ATF set has a near-field mouth response (Aria): use it
+    # for the direct path of the wearer's own voice, level relative to an omni
+    # point source at the mouth (scene._own_voice_near_field)
+    "near_field": True,
+    "near_field_gain_db": 0.0,
+    # render-time gain (dB) on the wearer's stored own-voice direct path, on top
+    # of near_field_gain_db (which is applied when the room bank is built)
+    "near_field_render_gain_db": 0.0,
+    # measured-ATF devices: compute the late part (image orders > atf_order,
+    # omni mics at the fitted positions) once per worn seat at its first yaw bin
+    # and reuse it for the other yaw bins (n_yaw times cheaper; the early part
+    # stays exact per yaw). False: per pose.
+    "atf_late_shared_yaw": False,
+    "sensor_noise_color": "pink",  # pink (1/f) | white
     # replay real conversations (one talker per recording/channel) with their
     # original timing instead of the HMM timeline (see replay.py)
     "replay": {
