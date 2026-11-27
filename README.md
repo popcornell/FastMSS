@@ -42,13 +42,13 @@ FastMSS/
 │   ├── simulator.py             # Meeting generation engine
 │   ├── hmm_turn_taking.py       # HMM turn-taking model
 │   ├── rirsimulator.py          # RIR generation via pyroomacoustics
-│   └── utils.py                 # Audio splitting, crossfading utilities
-├── recipes/
-│   ├── sim.py                   # Unified simulation pipeline
-│   ├── default.yaml             # Default config with sensible defaults
-│   └── paper/                   # Configs to reproduce paper experiments
-│       ├── ts_asr/              # TS-ASR experiment configs (Table 1 & 2)
-│       └── diarization/         # Diarization experiment configs
+│   ├── utils.py                 # Audio splitting, crossfading utilities
+│   └── recipes/
+│       ├── sim.py               # Unified simulation pipeline
+│       ├── default.yaml         # Default config with sensible defaults
+│       └── paper/               # Configs to reproduce paper experiments
+│           ├── ts_asr/          # TS-ASR experiment configs (Table 1 & 2)
+│           └── diarization/     # Diarization experiment configs
 ├── preprocessing/
 │   ├── download_wham.sh         # Download WHAM noise dataset
 │   ├── download_otospeech.sh    # Download + prepare otoSpeech dataset
@@ -79,9 +79,11 @@ bash preprocessing/download_wham.sh /path/to/wham
 
 All paths are set via Hydra CLI overrides — no config file editing needed:
 
+The pipeline is part of the installed package. After `pip install`, it can be run from any directory as `python -m fastmss.recipes.sim` or with the equivalent `fastmss-sim` command.
+
 ```bash
 # Basic: 1000 meetings, 2-4 speakers, 60s each, flat turn-taking priors
-python recipes/sim.py \
+python -m fastmss.recipes.sim \
     output_dir=/path/to/output \
     manifest_dir=/path/to/manifests \
     n_meetings=1000 \
@@ -89,7 +91,7 @@ python recipes/sim.py \
     n_jobs=16
 
 # With noise + reverberation
-python recipes/sim.py \
+python -m fastmss.recipes.sim \
     output_dir=/path/to/output \
     manifest_dir=/path/to/manifests \
     noise_folders=[/path/to/wham] \
@@ -98,7 +100,7 @@ python recipes/sim.py \
     n_jobs=16
 
 # Save per-speaker anechoic references (for separation/enhancement)
-python recipes/sim.py \
+python -m fastmss.recipes.sim \
     output_dir=/path/to/output \
     manifest_dir=/path/to/manifests \
     save_spk=true \
@@ -107,7 +109,7 @@ python recipes/sim.py \
     n_jobs=16
 
 # Generate RTTM + NeMo manifests (for diarization)
-python recipes/sim.py \
+python -m fastmss.recipes.sim \
     output_dir=/path/to/output \
     manifest_dir=/path/to/manifests \
     save_rttm=true \
@@ -179,17 +181,17 @@ Transition probabilities can be set to uniform (`flat`), fitted to a target corp
 
 ## Reproducing Paper Experiments
 
-The `recipes/paper/` directory contains the exact configs used in the Interspeech 2026 paper. To run them, override the config name:
+The `fastmss/recipes/paper/` directory contains the exact configs used in the Interspeech 2026 paper. To run them, override the config name:
 
 ```bash
 # TS-ASR Table 1: flat turn-taking priors
-python recipes/sim.py \
+python -m fastmss.recipes.sim \
     --config-name paper/ts_asr/table1/flat \
     output_dir=/path/to/output \
     manifest_dir=/path/to/manifests
 
 # Diarization: 2-speaker clean with overlap boosting
-python recipes/sim.py \
+python -m fastmss.recipes.sim \
     --config-name paper/diarization/clean/librispeech_2spk \
     output_dir=/path/to/output \
     manifest_dir=/path/to/manifests
